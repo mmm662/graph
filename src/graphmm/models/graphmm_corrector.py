@@ -25,12 +25,14 @@ class GraphMMCorrector(nn.Module):
         traj_gcn_layers: int = 1,
         use_crf: bool = True,
         unreachable_penalty: float = -1e4,
+        input_anchor_bias: float = 0.0,
     ):
         super().__init__()
         self.num_nodes = num_nodes
         self.road_dim = road_dim
         self.temperature = temperature
         self.use_crf = use_crf
+        self.input_anchor_bias = float(input_anchor_bias)
 
         self.node_encoder = NodeFeatureEncoder(num_floors, node_num_dim, floor_emb_dim, road_dim)
 
@@ -74,6 +76,16 @@ class GraphMMCorrector(nn.Module):
     def hidden_similarity(self, Z, H_R):
         return torch.einsum("bld,nd->bln", Z, H_R) * self.temperature
 
+
+    def _apply_input_anchor_bias(self, logits: torch.Tensor, pred_safe: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
+        if self.input_anchor_bias == 0.0:
+            return logits
+        B, L, _ = logits.shape
+        b_idx = torch.arange(B, device=logits.device).unsqueeze(1).expand(B, L)
+        t_idx = torch.arange(L, device=logits.device).unsqueeze(0).expand(B, L)
+        logits[b_idx[mask], t_idx[mask], pred_safe[mask]] += self.input_anchor_bias
+        return logits
+
     def forward_unary(
         self,
         pred_seq: torch.Tensor,
@@ -106,26 +118,47 @@ class GraphMMCorrector(nn.Module):
         dec_h = enc_mean.unsqueeze(0)
 
         zero = torch.zeros(B, self.road_dim, device=device)
-        prev_emb = zero
-        if teacher_forcing is not None:
-            tf = teacher_forcing.clone()
-            tf[tf == PADDING_ID] = 0
 
-        dec_inputs=[]
+        if teacher_forcing is None:
+            # Autoregressive decoding for inference: feed previous predicted node embedding.
+            # This avoids constant decoder inputs (all zeros) that collapse outputs.
+            prev_emb = zero
+            logits_steps = []
+            for _ in range(L):
+                dec_step, dec_h = self.decoder(prev_emb.unsqueeze(1), dec_h)
+                dec_step = dec_step[:, 0, :]
+                ctx_step = self.attn(dec_step, enc_out, enc_out, mask=mask)
+                z_step = F.normalize(self.dec_out(torch.cat([dec_step, ctx_step], dim=-1)), p=2, dim=-1)
+                logit_step = torch.einsum("bd,nd->bn", z_step, H_R) * self.temperature
+                logits_steps.append(logit_step.unsqueeze(1))
+
+                pred_ids = torch.argmax(logit_step, dim=-1)
+                prev_emb = H_R[pred_ids]
+
+            logits = torch.cat(logits_steps, dim=1)
+            logits = self._apply_input_anchor_bias(logits, pred_safe, mask)
+            return logits, H_R
+
+        tf = teacher_forcing.clone()
+        tf[tf == PADDING_ID] = 0
+
+        dec_inputs = []
+        prev_emb = zero
         for t in range(L):
             dec_inputs.append(prev_emb.unsqueeze(1))
-            if teacher_forcing is not None:
-                prev_emb = H_R[tf[:, t]]
+            prev_emb = H_R[tf[:, t]]
         dec_inp = torch.cat(dec_inputs, dim=1)
         dec_out, _ = self.decoder(dec_inp, dec_h)
 
-        ctx=[]
+        ctx = []
         for t in range(L):
-            ctx.append(self.attn(dec_out[:,t,:], enc_out, enc_out, mask=mask).unsqueeze(1))
+            ctx.append(self.attn(dec_out[:, t, :], enc_out, enc_out, mask=mask).unsqueeze(1))
         ctx_all = torch.cat(ctx, dim=1)
 
         Z = F.normalize(self.dec_out(torch.cat([dec_out, ctx_all], dim=-1)), p=2, dim=-1)
-        return self.hidden_similarity(Z, H_R), H_R
+        logits = self.hidden_similarity(Z, H_R)
+        logits = self._apply_input_anchor_bias(logits, pred_safe, mask)
+        return logits, H_R
 
 @torch.no_grad()
 def decode_argmax(unary_logits, lengths):

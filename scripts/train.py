@@ -2,7 +2,6 @@ import argparse, os, random, sys
 from pathlib import Path
 import yaml
 import torch
-from graphmm.datasets.trajectory_provider import load_paired_samples_from_runs
 
 ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "src"
@@ -11,7 +10,7 @@ if str(SRC) not in sys.path:
 
 from graphmm.utils.seed import set_seed
 from graphmm.io.multifloor_builder import build_multifloor_graph_with_features, GraphBatch
-from graphmm.datasets.trajectory_provider import sim_samples_on_graph
+from graphmm.datasets.trajectory_provider import sim_samples_on_graph, load_paired_samples_from_runs
 from graphmm.utils.graph import build_adj_list
 from graphmm.models.graphmm_corrector import GraphMMCorrector
 from graphmm.training import train_loop
@@ -97,8 +96,9 @@ def main():
     random.shuffle(samples)
     k = int(len(samples) * cfg["sim"]["train_ratio"])
     # train_samples, valid_samples = samples[:k], samples[k:]
-    train_samples = load_paired_samples_from_runs("data/traj/train", gb, floor_base=1)
-    valid_samples = load_paired_samples_from_runs("data/traj/valid", gb, floor_base=1)
+    xy_mode = cfg["data"].get("traj_xy_mode", "auto")
+    train_samples = load_paired_samples_from_runs("data/traj/train", gb, floor_base=1, xy_mode=xy_mode)
+    valid_samples = load_paired_samples_from_runs("data/traj/valid", gb, floor_base=1, xy_mode=xy_mode)
 
     print(f"[data] train={len(train_samples)} valid={len(valid_samples)}")
 
@@ -115,6 +115,7 @@ def main():
         traj_gcn_layers=cfg["model"]["traj_gcn_layers"],
         use_crf=cfg["model"]["use_crf"],
         unreachable_penalty=cfg["model"]["unreachable_penalty"],
+        input_anchor_bias=cfg["model"].get("input_anchor_bias", 0.0),
     )
 
     run_dir = ROOT / "runs" / cfg["output"]["run_name"]
@@ -132,6 +133,9 @@ def main():
         top_r_train=cfg["train"]["top_r_train"],
         top_r_decode=cfg["train"]["top_r_decode"],
         use_crf=cfg["model"]["use_crf"],
+        ss_start=cfg["train"].get("ss_start", 1.0),
+        ss_end=cfg["train"].get("ss_end", 1.0),
+        ss_mode=cfg["train"].get("ss_mode", "linear"),
     )
 
 if __name__ == "__main__":

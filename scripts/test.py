@@ -21,7 +21,7 @@ from graphmm.utils.graph import (
     token_seq_accuracy,
     path_feasibility_rate,
 )
-from graphmm.datasets.trajectory_provider import load_pts_coord_any, coords_to_global_node_seq
+from graphmm.datasets.trajectory_provider import load_pts_coord_any, coords_to_global_node_seq, build_transition_graph
 
 
 def _ensure_str(x, name: str) -> str:
@@ -67,6 +67,7 @@ def ids_to_xyzf(seq, gb, floor_base_out: int = 1):
     return out
 
 
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--config", default=str(ROOT / "configs/mall_train.yaml"))
@@ -75,6 +76,7 @@ def main():
     ap.add_argument("--mat_paths", nargs="*", default=None)
     ap.add_argument("--floor_base", type=int, default=None, help="trajectory floor base: 1 for 1..5, 0 for 0..4")
     ap.add_argument("--device", default="auto")
+    ap.add_argument("--traj_xy_mode", default=None, choices=["xy", "yx", "auto"], help="trajectory coordinate order mapping")
     ap.add_argument("--max_print", type=int, default=30, help="max points to print per sequence")
     args = ap.parse_args()
 
@@ -97,6 +99,7 @@ def main():
     ckpt = args.ckpt or cfg.get("test", {}).get("ckpt_path", None)
     test_dir = args.test_dir or cfg.get("test", {}).get("test_dir", "data/traj/test")
     floor_base = args.floor_base if args.floor_base is not None else cfg.get("test", {}).get("floor_base", 1)
+    traj_xy_mode = args.traj_xy_mode or cfg.get("data", {}).get("traj_xy_mode", "auto")
 
     if ckpt is None:
         raise ValueError("ckpt_path is missing. Fill cfg.test.ckpt_path or pass --ckpt ...")
@@ -134,6 +137,7 @@ def main():
         traj_gcn_layers=cfg["model"]["traj_gcn_layers"],
         use_crf=cfg["model"]["use_crf"],
         unreachable_penalty=cfg["model"]["unreachable_penalty"],
+        input_anchor_bias=cfg["model"].get("input_anchor_bias", 0.0),
     ).to(device)
 
     state = torch.load(ckpt, map_location=device)
@@ -163,8 +167,8 @@ def main():
             x2, y2, f2 = load_pts_coord_any(gt_path)
 
             # map to node sequences
-            pred_seq = coords_to_global_node_seq(x1, y1, f1, gb, floor_base=floor_base)
-            true_seq = coords_to_global_node_seq(x2, y2, f2, gb, floor_base=floor_base)
+            pred_seq = coords_to_global_node_seq(x1, y1, f1, gb, floor_base=floor_base, xy_mode=traj_xy_mode)
+            true_seq = coords_to_global_node_seq(x2, y2, f2, gb, floor_base=floor_base, xy_mode=traj_xy_mode)
 
             L = min(len(pred_seq), len(true_seq))
             if L < 3:
@@ -176,14 +180,28 @@ def main():
             pred = torch.tensor([pred_seq], dtype=torch.long, device=device)
             lengths = torch.tensor([L], dtype=torch.long, device=device)
 
+            # Build trajectory transition graph from current predicted sequence to match
+            # training-time use of traj_gcn (which always consumes transition edges).
+            ecount = build_transition_graph([pred_seq], directed=True, min_count=1)
+            if ecount:
+                src = torch.tensor([u for (u, v, c) in ecount], dtype=torch.long, device=device)
+                dst = torch.tensor([v for (u, v, c) in ecount], dtype=torch.long, device=device)
+                w = torch.tensor([float(c) for (u, v, c) in ecount], dtype=torch.float32, device=device)
+                w = w / w.mean().clamp(min=1e-6)
+                traj_edge_index = torch.stack([src, dst], dim=0)
+                traj_edge_weight = w
+            else:
+                traj_edge_index = None
+                traj_edge_weight = None
+
             unary_logits, H_R = model.forward_unary(
                 pred, lengths,
                 node_num_feat=gb.node_num_feat,
                 floor_id=gb.floor_id,
                 edge_index=gb.edge_index,
                 edge_attr=gb.edge_attr,
-                traj_edge_index=None,
-                traj_edge_weight=None,
+                traj_edge_index=traj_edge_index,
+                traj_edge_weight=traj_edge_weight,
                 teacher_forcing=None
             )
             unary = unary_logits[0, :L, :]
