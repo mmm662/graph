@@ -22,6 +22,9 @@ def train_loop(
     top_r_train: int,
     top_r_decode: int,
     use_crf: bool,
+    ss_start: float = 1.0,
+    ss_end: float = 1.0,
+    ss_mode: str = "linear",
 ):
     os.makedirs(run_dir, exist_ok=True)
     model = model.to(device)
@@ -91,6 +94,19 @@ def train_loop(
         feas = path_feasibility_rate(all_p, road_adj_list, k_hop=max(1,k_hop))
         return tok, seq, feas
 
+
+    def teacher_forcing_ratio(epoch_idx: int) -> float:
+        if epochs <= 1:
+            return float(ss_end)
+        start = float(ss_start)
+        end = float(ss_end)
+        t = (epoch_idx - 1) / max(epochs - 1, 1)
+        if ss_mode == "linear":
+            ratio = start + (end - start) * t
+        else:
+            ratio = end
+        return float(max(0.0, min(1.0, ratio)))
+
     best = -1.0
     for ep in range(1, epochs+1):
         model.train()
@@ -108,6 +124,15 @@ def train_loop(
 
             pred_pad = pred_pad.to(device); true_pad = true_pad.to(device); lengths = lengths.to(device)
 
+            tf_ratio = teacher_forcing_ratio(ep)
+            if tf_ratio >= 1.0:
+                tf_in = true_pad
+            elif tf_ratio <= 0.0:
+                tf_in = pred_pad
+            else:
+                tf_mask = (torch.rand_like(true_pad, dtype=torch.float32) < tf_ratio) & (true_pad != PADDING_ID)
+                tf_in = torch.where(tf_mask, true_pad, pred_pad)
+
             unary_logits, H_R = model.forward_unary(
                 pred_pad, lengths,
                 node_num_feat=node_num_feat,
@@ -116,7 +141,7 @@ def train_loop(
                 edge_attr=edge_attr,
                 traj_edge_index=traj_edge_index,
                 traj_edge_weight=traj_edge_weight,
-                teacher_forcing=true_pad
+                teacher_forcing=tf_in
             )
 
             if use_crf:
@@ -142,7 +167,7 @@ def train_loop(
         train_loss = total_loss / max(total_cnt,1)
         val_tok, val_seq, val_feas = run_eval(valid_samples) if valid_samples else (0.0,0.0,0.0)
 
-        print(f"[epoch {ep:02d}] loss={train_loss:.4f} val_tok={val_tok:.3f} val_seq={val_seq:.3f} feas@k={val_feas:.3f}")
+        print(f"[epoch {ep:02d}] tf_ratio={teacher_forcing_ratio(ep):.3f} loss={train_loss:.4f} val_tok={val_tok:.3f} val_seq={val_seq:.3f} feas@k={val_feas:.3f}")
 
         score = val_tok + 0.1 * val_feas
         if score > best:
