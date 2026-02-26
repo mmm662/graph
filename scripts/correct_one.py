@@ -10,6 +10,7 @@ if str(SRC) not in sys.path:
 
 from graphmm.io.multifloor_builder import build_multifloor_graph_with_features
 from graphmm.models.graphmm_corrector import GraphMMCorrector, decode_argmax
+from graphmm.datasets.trajectory_provider import build_transition_graph
 from graphmm.utils.graph import build_adj_list, k_hop_neighbors
 
 def parse_int_list(s: str):
@@ -66,14 +67,26 @@ def main():
     lengths = torch.tensor([len(pred_seq)], dtype=torch.long, device=device)
 
     # 3) forward unary
+    ecount = build_transition_graph([pred_seq], directed=True, min_count=1)
+    if ecount:
+        src = torch.tensor([u for (u, v, c) in ecount], dtype=torch.long, device=device)
+        dst = torch.tensor([v for (u, v, c) in ecount], dtype=torch.long, device=device)
+        w = torch.tensor([float(c) for (u, v, c) in ecount], dtype=torch.float32, device=device)
+        w = w / w.mean().clamp(min=1e-6)
+        traj_edge_index = torch.stack([src, dst], dim=0)
+        traj_edge_weight = w
+    else:
+        traj_edge_index = None
+        traj_edge_weight = None
+
     unary_logits, H_R = model.forward_unary(
         pred, lengths,
         node_num_feat=gb.node_num_feat,
         floor_id=gb.floor_id,
         edge_index=gb.edge_index,
         edge_attr=gb.edge_attr,
-        traj_edge_index=None,
-        traj_edge_weight=None,
+        traj_edge_index=traj_edge_index,
+        traj_edge_weight=traj_edge_weight,
         teacher_forcing=None
     )
 
