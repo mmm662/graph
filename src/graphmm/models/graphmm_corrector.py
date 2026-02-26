@@ -167,10 +167,13 @@ def decode_argmax(unary_logits, lengths):
 
 
 @torch.no_grad()
-def confidence_gate_sequence(raw_seq: List[int], corrected_seq: List[int], unary_logits: torch.Tensor, min_confidence: float) -> List[int]:
-    if min_confidence <= 0.0:
-        return corrected_seq
-
+def confidence_gate_sequence(
+    raw_seq: List[int],
+    corrected_seq: List[int],
+    unary_logits: torch.Tensor,
+    min_confidence: float,
+    min_logit_gain: float = 0.0,
+) -> List[int]:
     L = min(len(raw_seq), len(corrected_seq), int(unary_logits.size(0)))
     if L <= 0:
         return corrected_seq
@@ -180,6 +183,15 @@ def confidence_gate_sequence(raw_seq: List[int], corrected_seq: List[int], unary
 
     out = corrected_seq[:]
     for t in range(L):
-        if float(conf[t].item()) < float(min_confidence):
-            out[t] = raw_seq[t]
+        raw_id = int(raw_seq[t])
+        corr_id = int(corrected_seq[t])
+        if raw_id == corr_id:
+            continue
+
+        conf_ok = (float(conf[t].item()) >= float(min_confidence))
+        gain = float(unary_logits[t, corr_id].item() - unary_logits[t, raw_id].item())
+        gain_ok = (gain >= float(min_logit_gain))
+
+        if not (conf_ok and gain_ok):
+            out[t] = raw_id
     return out

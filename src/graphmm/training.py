@@ -27,6 +27,7 @@ def train_loop(
     ss_mode: str = "linear",
     traj_graph_source: str = "mixed",
     min_correction_confidence: float = 0.0,
+    min_correction_logit_gain: float = 0.0,
 ):
     os.makedirs(run_dir, exist_ok=True)
     model = model.to(device)
@@ -103,6 +104,7 @@ def train_loop(
                             corrected_seq=path,
                             unary_logits=unary_i,
                             min_confidence=min_correction_confidence,
+                            min_logit_gain=min_correction_logit_gain,
                         )
                         out.append(path)
                 else:
@@ -113,6 +115,7 @@ def train_loop(
                             corrected_seq=out[bi],
                             unary_logits=unary_logits[bi, :int(lengths[bi].item()), :],
                             min_confidence=min_correction_confidence,
+                            min_logit_gain=min_correction_logit_gain,
                         )
                         for bi in range(len(out))
                     ]
@@ -197,7 +200,7 @@ def train_loop(
         train_loss = total_loss / max(total_cnt,1)
         val_tok, val_seq, val_feas = run_eval(valid_samples) if valid_samples else (0.0,0.0,0.0)
 
-        print(f"[epoch {ep:02d}] tf_ratio={teacher_forcing_ratio(ep):.3f} traj_graph={traj_graph_source} conf_gate={min_correction_confidence:.2f} loss={train_loss:.4f} val_tok={val_tok:.3f} val_seq={val_seq:.3f} feas@k={val_feas:.3f}")
+        print(f"[epoch {ep:02d}] tf_ratio={teacher_forcing_ratio(ep):.3f} traj_graph={traj_graph_source} conf_gate={min_correction_confidence:.2f} gain_gate={min_correction_logit_gain:.2f} loss={train_loss:.4f} val_tok={val_tok:.3f} val_seq={val_seq:.3f} feas@k={val_feas:.3f}")
 
         score = val_tok + 0.1 * val_feas
         if score > best:

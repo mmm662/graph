@@ -138,6 +138,7 @@ def main():
         ss_mode=cfg["train"].get("ss_mode", "linear"),
         traj_graph_source=cfg["train"].get("traj_graph_source", "mixed"),
         min_correction_confidence=cfg["model"].get("min_correction_confidence", 0.0),
+        min_correction_logit_gain=cfg["model"].get("min_correction_logit_gain", 0.0),
     )
 
 if __name__ == "__main__":

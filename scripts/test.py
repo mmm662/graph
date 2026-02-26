@@ -101,6 +101,7 @@ def main():
     floor_base = args.floor_base if args.floor_base is not None else cfg.get("test", {}).get("floor_base", 1)
     traj_xy_mode = args.traj_xy_mode or cfg.get("data", {}).get("traj_xy_mode", "auto")
     min_correction_confidence = float(cfg.get("model", {}).get("min_correction_confidence", 0.0))
+    min_correction_logit_gain = float(cfg.get("model", {}).get("min_correction_logit_gain", 0.0))
 
     if ckpt is None:
         raise ValueError("ckpt_path is missing. Fill cfg.test.ckpt_path or pass --ckpt ...")
@@ -222,6 +223,7 @@ def main():
                 corrected_seq=corrected,
                 unary_logits=unary,
                 min_confidence=min_correction_confidence,
+                min_logit_gain=min_correction_logit_gain,
             )
 
             raw_preds.append(pred_seq)
@@ -268,7 +270,7 @@ def main():
         changed_tokens += sum(int(a != b) for a, b in zip(raw[:L], corr[:L]))
     change_ratio = (changed_tokens / total_tokens) if total_tokens > 0 else 0.0
 
-    print(f"\n[TEST] n={len(preds)} raw_tok={raw_tok:.3f} tok={tok:.3f} raw_seq={raw_seq:.3f} seq={seq:.3f} feas@k={feas:.3f} changed={change_ratio:.3f} conf_gate={min_correction_confidence:.2f}")
+    print(f"\n[TEST] n={len(preds)} raw_tok={raw_tok:.3f} tok={tok:.3f} raw_seq={raw_seq:.3f} seq={seq:.3f} feas@k={feas:.3f} changed={change_ratio:.3f} conf_gate={min_correction_confidence:.2f} gain_gate={min_correction_logit_gain:.2f}")
 
 
 if __name__ == "__main__":
