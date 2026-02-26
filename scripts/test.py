@@ -21,7 +21,7 @@ from graphmm.utils.graph import (
     token_seq_accuracy,
     path_feasibility_rate,
 )
-from graphmm.datasets.trajectory_provider import load_pts_coord_any, coords_to_global_node_seq
+from graphmm.datasets.trajectory_provider import load_pts_coord_any, coords_to_global_node_seq, build_transition_graph
 
 
 def _ensure_str(x, name: str) -> str:
@@ -65,6 +65,7 @@ def ids_to_xyzf(seq, gb, floor_base_out: int = 1):
         f = int(floor[int(nid)]) + floor_base_out
         out.append((int(nid), float(x), float(y), int(f)))
     return out
+
 
 
 def main():
@@ -134,6 +135,7 @@ def main():
         traj_gcn_layers=cfg["model"]["traj_gcn_layers"],
         use_crf=cfg["model"]["use_crf"],
         unreachable_penalty=cfg["model"]["unreachable_penalty"],
+        input_anchor_bias=cfg["model"].get("input_anchor_bias", 0.0),
     ).to(device)
 
     state = torch.load(ckpt, map_location=device)
@@ -176,14 +178,28 @@ def main():
             pred = torch.tensor([pred_seq], dtype=torch.long, device=device)
             lengths = torch.tensor([L], dtype=torch.long, device=device)
 
+            # Build trajectory transition graph from current predicted sequence to match
+            # training-time use of traj_gcn (which always consumes transition edges).
+            ecount = build_transition_graph([pred_seq], directed=True, min_count=1)
+            if ecount:
+                src = torch.tensor([u for (u, v, c) in ecount], dtype=torch.long, device=device)
+                dst = torch.tensor([v for (u, v, c) in ecount], dtype=torch.long, device=device)
+                w = torch.tensor([float(c) for (u, v, c) in ecount], dtype=torch.float32, device=device)
+                w = w / w.mean().clamp(min=1e-6)
+                traj_edge_index = torch.stack([src, dst], dim=0)
+                traj_edge_weight = w
+            else:
+                traj_edge_index = None
+                traj_edge_weight = None
+
             unary_logits, H_R = model.forward_unary(
                 pred, lengths,
                 node_num_feat=gb.node_num_feat,
                 floor_id=gb.floor_id,
                 edge_index=gb.edge_index,
                 edge_attr=gb.edge_attr,
-                traj_edge_index=None,
-                traj_edge_weight=None,
+                traj_edge_index=traj_edge_index,
+                traj_edge_weight=traj_edge_weight,
                 teacher_forcing=None
             )
             unary = unary_logits[0, :L, :]
