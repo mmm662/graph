@@ -25,12 +25,14 @@ class GraphMMCorrector(nn.Module):
         traj_gcn_layers: int = 1,
         use_crf: bool = True,
         unreachable_penalty: float = -1e4,
+        input_anchor_bias: float = 0.0,
     ):
         super().__init__()
         self.num_nodes = num_nodes
         self.road_dim = road_dim
         self.temperature = temperature
         self.use_crf = use_crf
+        self.input_anchor_bias = float(input_anchor_bias)
 
         self.node_encoder = NodeFeatureEncoder(num_floors, node_num_dim, floor_emb_dim, road_dim)
 
@@ -73,6 +75,16 @@ class GraphMMCorrector(nn.Module):
 
     def hidden_similarity(self, Z, H_R):
         return torch.einsum("bld,nd->bln", Z, H_R) * self.temperature
+
+
+    def _apply_input_anchor_bias(self, logits: torch.Tensor, pred_safe: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
+        if self.input_anchor_bias == 0.0:
+            return logits
+        B, L, _ = logits.shape
+        b_idx = torch.arange(B, device=logits.device).unsqueeze(1).expand(B, L)
+        t_idx = torch.arange(L, device=logits.device).unsqueeze(0).expand(B, L)
+        logits[b_idx[mask], t_idx[mask], pred_safe[mask]] += self.input_anchor_bias
+        return logits
 
     def forward_unary(
         self,
@@ -123,7 +135,9 @@ class GraphMMCorrector(nn.Module):
                 pred_ids = torch.argmax(logit_step, dim=-1)
                 prev_emb = H_R[pred_ids]
 
-            return torch.cat(logits_steps, dim=1), H_R
+            logits = torch.cat(logits_steps, dim=1)
+            logits = self._apply_input_anchor_bias(logits, pred_safe, mask)
+            return logits, H_R
 
         tf = teacher_forcing.clone()
         tf[tf == PADDING_ID] = 0
@@ -142,7 +156,9 @@ class GraphMMCorrector(nn.Module):
         ctx_all = torch.cat(ctx, dim=1)
 
         Z = F.normalize(self.dec_out(torch.cat([dec_out, ctx_all], dim=-1)), p=2, dim=-1)
-        return self.hidden_similarity(Z, H_R), H_R
+        logits = self.hidden_similarity(Z, H_R)
+        logits = self._apply_input_anchor_bias(logits, pred_safe, mask)
+        return logits, H_R
 
 @torch.no_grad()
 def decode_argmax(unary_logits, lengths):
