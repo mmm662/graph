@@ -158,7 +158,7 @@ def main():
             f"Make sure you have both *_neg_*.mat and matching *_gt_*.mat."
         )
 
-    preds, golds = [], []
+    raw_preds, preds, golds = [], [], []
 
     with torch.no_grad():
         for neg_path, gt_path in pairs:
@@ -216,6 +216,7 @@ def main():
             else:
                 corrected = decode_argmax(unary_logits, lengths)[0]
 
+            raw_preds.append(pred_seq)
             preds.append(corrected)
             golds.append(true_seq)
 
@@ -247,9 +248,19 @@ def main():
             print("\n[gt (id,x,y,f)]")
             print(ids_to_xyzf(true_seq[:maxp], gb, floor_base_out=floor_base_out))
 
+    raw_tok, raw_seq = token_seq_accuracy(raw_preds, golds)
     tok, seq = token_seq_accuracy(preds, golds)
     feas = path_feasibility_rate(preds, road_adj_list, k_hop=max(1, k_hop))
-    print(f"\n[TEST] n={len(preds)} tok={tok:.3f} seq={seq:.3f} feas@k={feas:.3f}")
+
+    total_tokens = 0
+    changed_tokens = 0
+    for raw, corr in zip(raw_preds, preds):
+        L = min(len(raw), len(corr))
+        total_tokens += L
+        changed_tokens += sum(int(a != b) for a, b in zip(raw[:L], corr[:L]))
+    change_ratio = (changed_tokens / total_tokens) if total_tokens > 0 else 0.0
+
+    print(f"\n[TEST] n={len(preds)} raw_tok={raw_tok:.3f} tok={tok:.3f} raw_seq={raw_seq:.3f} seq={seq:.3f} feas@k={feas:.3f} changed={change_ratio:.3f}")
 
 
 if __name__ == "__main__":
