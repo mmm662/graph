@@ -106,22 +106,39 @@ class GraphMMCorrector(nn.Module):
         dec_h = enc_mean.unsqueeze(0)
 
         zero = torch.zeros(B, self.road_dim, device=device)
-        prev_emb = zero
-        if teacher_forcing is not None:
-            tf = teacher_forcing.clone()
-            tf[tf == PADDING_ID] = 0
 
-        dec_inputs=[]
+        if teacher_forcing is None:
+            # Autoregressive decoding for inference: feed previous predicted node embedding.
+            # This avoids constant decoder inputs (all zeros) that collapse outputs.
+            prev_emb = zero
+            logits_steps = []
+            for _ in range(L):
+                dec_step, dec_h = self.decoder(prev_emb.unsqueeze(1), dec_h)
+                dec_step = dec_step[:, 0, :]
+                ctx_step = self.attn(dec_step, enc_out, enc_out, mask=mask)
+                z_step = F.normalize(self.dec_out(torch.cat([dec_step, ctx_step], dim=-1)), p=2, dim=-1)
+                logit_step = torch.einsum("bd,nd->bn", z_step, H_R) * self.temperature
+                logits_steps.append(logit_step.unsqueeze(1))
+
+                pred_ids = torch.argmax(logit_step, dim=-1)
+                prev_emb = H_R[pred_ids]
+
+            return torch.cat(logits_steps, dim=1), H_R
+
+        tf = teacher_forcing.clone()
+        tf[tf == PADDING_ID] = 0
+
+        dec_inputs = []
+        prev_emb = zero
         for t in range(L):
             dec_inputs.append(prev_emb.unsqueeze(1))
-            if teacher_forcing is not None:
-                prev_emb = H_R[tf[:, t]]
+            prev_emb = H_R[tf[:, t]]
         dec_inp = torch.cat(dec_inputs, dim=1)
         dec_out, _ = self.decoder(dec_inp, dec_h)
 
-        ctx=[]
+        ctx = []
         for t in range(L):
-            ctx.append(self.attn(dec_out[:,t,:], enc_out, enc_out, mask=mask).unsqueeze(1))
+            ctx.append(self.attn(dec_out[:, t, :], enc_out, enc_out, mask=mask).unsqueeze(1))
         ctx_all = torch.cat(ctx, dim=1)
 
         Z = F.normalize(self.dec_out(torch.cat([dec_out, ctx_all], dim=-1)), p=2, dim=-1)
