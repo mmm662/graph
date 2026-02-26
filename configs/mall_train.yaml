@@ -45,6 +45,7 @@ train:
   ss_start: 0.8
   ss_end: 0.0
   ss_mode: linear
-  traj_graph_source: mixed
+  traj_graph_source: "true"
+  eval_apply_gate: false
 output:
   run_name: mall_final_crf
