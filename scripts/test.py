@@ -140,6 +140,7 @@ def main():
         use_crf=cfg["model"]["use_crf"],
         unreachable_penalty=cfg["model"]["unreachable_penalty"],
         input_anchor_bias=cfg["model"].get("input_anchor_bias", 0.0),
+        apply_input_anchor_bias_inference=cfg["model"].get("apply_input_anchor_bias_inference", False),
     ).to(device)
 
     state = torch.load(ckpt, map_location=device)

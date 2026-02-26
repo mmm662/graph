@@ -26,6 +26,7 @@ class GraphMMCorrector(nn.Module):
         use_crf: bool = True,
         unreachable_penalty: float = -1e4,
         input_anchor_bias: float = 0.0,
+        apply_input_anchor_bias_inference: bool = False,
     ):
         super().__init__()
         self.num_nodes = num_nodes
@@ -33,6 +34,7 @@ class GraphMMCorrector(nn.Module):
         self.temperature = temperature
         self.use_crf = use_crf
         self.input_anchor_bias = float(input_anchor_bias)
+        self.apply_input_anchor_bias_inference = bool(apply_input_anchor_bias_inference)
 
         self.node_encoder = NodeFeatureEncoder(num_floors, node_num_dim, floor_emb_dim, road_dim)
 
@@ -136,7 +138,8 @@ class GraphMMCorrector(nn.Module):
                 prev_emb = H_R[pred_ids]
 
             logits = torch.cat(logits_steps, dim=1)
-            logits = self._apply_input_anchor_bias(logits, pred_safe, mask)
+            if self.apply_input_anchor_bias_inference:
+                logits = self._apply_input_anchor_bias(logits, pred_safe, mask)
             return logits, H_R
 
         tf = teacher_forcing.clone()

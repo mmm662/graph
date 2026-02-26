@@ -116,6 +116,7 @@ def main():
         use_crf=cfg["model"]["use_crf"],
         unreachable_penalty=cfg["model"]["unreachable_penalty"],
         input_anchor_bias=cfg["model"].get("input_anchor_bias", 0.0),
+        apply_input_anchor_bias_inference=cfg["model"].get("apply_input_anchor_bias_inference", False),
     )
 
     run_dir = ROOT / "runs" / cfg["output"]["run_name"]
