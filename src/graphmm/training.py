@@ -29,7 +29,12 @@ def train_loop(
     min_correction_confidence: float = 0.0,
     min_correction_logit_gain: float = 0.0,
     eval_apply_gate: bool = False,
+    crf_train_loss: str = "ce",
 ):
+    crf_train_loss = str(crf_train_loss).lower()
+    if crf_train_loss not in {"ce", "crf"}:
+        raise ValueError(f"crf_train_loss must be one of ['ce', 'crf'], got: {crf_train_loss}")
+
     os.makedirs(run_dir, exist_ok=True)
     model = model.to(device)
     opt = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=1e-4)
@@ -133,6 +138,17 @@ def train_loop(
                     for bi in range(len(out))
                 ]
 
+                out_gated = [
+                    confidence_gate_sequence(
+                        raw_seq=pred_seqs[bi],
+                        corrected_seq=out[bi],
+                        unary_logits=unary_logits[bi, :int(lengths[bi].item()), :],
+                        min_confidence=min_correction_confidence,
+                        min_logit_gain=min_correction_logit_gain,
+                    )
+                    for bi in range(len(out))
+                ]
+
                 raw_all.extend(pred_seqs)
                 pred_all.extend(out)
                 gated_all.extend(out_gated)
@@ -214,7 +230,7 @@ def train_loop(
                 teacher_forcing=tf_in
             )
 
-            if use_crf:
+            if use_crf and crf_train_loss == "crf":
                 loss = torch.tensor(0.0, device=device)
                 for bi in range(len(batch)):
                     L = int(lengths[bi].item())
@@ -243,7 +259,7 @@ def train_loop(
         print(
             f"[epoch {ep:02d}] tf_ratio={teacher_forcing_ratio(ep):.3f} traj_graph={str(traj_graph_source).lower()} "
             f"conf_gate={min_correction_confidence:.2f} gain_gate={min_correction_logit_gain:.2f} "
-            f"eval_gate={int(eval_apply_gate)} loss={train_loss:.4f} "
+            f"eval_gate={int(eval_apply_gate)} crf_loss={crf_train_loss} loss={train_loss:.4f} "
             f"raw_tok={em['raw_tok']:.3f} pred_tok={em['pred_tok']:.3f} gated_tok={em['gated_tok']:.3f} "
             f"final_tok={em['final_tok']:.3f} final_seq={em['final_seq']:.3f} changed={em['changed']:.3f} feas@k={em['feas']:.3f}"
         )

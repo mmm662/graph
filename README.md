@@ -122,6 +122,9 @@ python scripts/test.py --config configs/mall_train.yaml --max_print 10
 - `model.min_correction_confidence`：置信度阈值
 - `model.min_correction_logit_gain`：logit 增益阈值
 - `train.eval_apply_gate`：训练期验证时是否使用 gate 后结果作为最终评分
+- `train.crf_train_loss`：CRF 开启时训练损失类型，`ce`（推荐，稳定）或 `crf`（结构化 NLL）
+
+> 说明：`input_anchor_bias` 仅在推理分支生效，不参与 teacher-forcing 训练 loss，避免训练阶段被“复制输入”偏置干扰。
 
 ### 6.2 轨迹图来源
 - `train.traj_graph_source` 可选：

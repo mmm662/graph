@@ -30,9 +30,9 @@ model:
   traj_gcn_layers: 1
   use_crf: true
   unreachable_penalty: -5000.0
-  input_anchor_bias: 0.3
-  min_correction_confidence: 0.60
-  min_correction_logit_gain: 0.80
+  input_anchor_bias: 0.05
+  min_correction_confidence: 0.45
+  min_correction_logit_gain: 0.20
 train:
   seed: 42
   epochs: 30
@@ -45,7 +45,8 @@ train:
   ss_start: 0.8
   ss_end: 0.0
   ss_mode: linear
-  traj_graph_source: "true"
+  traj_graph_source: mixed
   eval_apply_gate: false
+  crf_train_loss: ce
 output:
   run_name: mall_final_crf

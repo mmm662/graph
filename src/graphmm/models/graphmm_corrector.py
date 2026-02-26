@@ -157,7 +157,6 @@ class GraphMMCorrector(nn.Module):
 
         Z = F.normalize(self.dec_out(torch.cat([dec_out, ctx_all], dim=-1)), p=2, dim=-1)
         logits = self.hidden_similarity(Z, H_R)
-        logits = self._apply_input_anchor_bias(logits, pred_safe, mask)
         return logits, H_R
 
 @torch.no_grad()
