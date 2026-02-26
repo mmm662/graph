@@ -14,7 +14,7 @@ if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 from graphmm.io.multifloor_builder import build_multifloor_graph_with_features
-from graphmm.models.graphmm_corrector import GraphMMCorrector, decode_argmax
+from graphmm.models.graphmm_corrector import GraphMMCorrector, decode_argmax, confidence_gate_sequence
 from graphmm.utils.graph import (
     build_adj_list,
     k_hop_neighbors,
@@ -100,6 +100,7 @@ def main():
     test_dir = args.test_dir or cfg.get("test", {}).get("test_dir", "data/traj/test")
     floor_base = args.floor_base if args.floor_base is not None else cfg.get("test", {}).get("floor_base", 1)
     traj_xy_mode = args.traj_xy_mode or cfg.get("data", {}).get("traj_xy_mode", "auto")
+    min_correction_confidence = float(cfg.get("model", {}).get("min_correction_confidence", 0.0))
 
     if ckpt is None:
         raise ValueError("ckpt_path is missing. Fill cfg.test.ckpt_path or pass --ckpt ...")
@@ -216,6 +217,13 @@ def main():
             else:
                 corrected = decode_argmax(unary_logits, lengths)[0]
 
+            corrected = confidence_gate_sequence(
+                raw_seq=pred_seq,
+                corrected_seq=corrected,
+                unary_logits=unary,
+                min_confidence=min_correction_confidence,
+            )
+
             raw_preds.append(pred_seq)
             preds.append(corrected)
             golds.append(true_seq)
@@ -260,7 +268,7 @@ def main():
         changed_tokens += sum(int(a != b) for a, b in zip(raw[:L], corr[:L]))
     change_ratio = (changed_tokens / total_tokens) if total_tokens > 0 else 0.0
 
-    print(f"\n[TEST] n={len(preds)} raw_tok={raw_tok:.3f} tok={tok:.3f} raw_seq={raw_seq:.3f} seq={seq:.3f} feas@k={feas:.3f} changed={change_ratio:.3f}")
+    print(f"\n[TEST] n={len(preds)} raw_tok={raw_tok:.3f} tok={tok:.3f} raw_seq={raw_seq:.3f} seq={seq:.3f} feas@k={feas:.3f} changed={change_ratio:.3f} conf_gate={min_correction_confidence:.2f}")
 
 
 if __name__ == "__main__":

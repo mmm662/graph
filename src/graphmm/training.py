@@ -5,7 +5,7 @@ import torch
 from tqdm import tqdm
 
 from graphmm.datasets.trajectory_provider import pad_batch, PADDING_ID, Sample, build_transition_graph
-from graphmm.models.graphmm_corrector import GraphMMCorrector, decode_argmax
+from graphmm.models.graphmm_corrector import GraphMMCorrector, decode_argmax, confidence_gate_sequence
 from graphmm.utils.graph import token_seq_accuracy, path_feasibility_rate, build_adj_list, k_hop_neighbors
 
 def train_loop(
@@ -26,6 +26,7 @@ def train_loop(
     ss_end: float = 1.0,
     ss_mode: str = "linear",
     traj_graph_source: str = "mixed",
+    min_correction_confidence: float = 0.0,
 ):
     os.makedirs(run_dir, exist_ok=True)
     model = model.to(device)
@@ -97,9 +98,24 @@ def train_loop(
                         L = int(lengths[bi].item())
                         unary_i = unary_logits[bi,:L,:]
                         path = model.crf.viterbi_one(unary_i, H_R, allowed_prev, top_r=top_r_decode)
+                        path = confidence_gate_sequence(
+                            raw_seq=pred_seqs[bi],
+                            corrected_seq=path,
+                            unary_logits=unary_i,
+                            min_confidence=min_correction_confidence,
+                        )
                         out.append(path)
                 else:
                     out = decode_argmax(unary_logits, lengths)
+                    out = [
+                        confidence_gate_sequence(
+                            raw_seq=pred_seqs[bi],
+                            corrected_seq=out[bi],
+                            unary_logits=unary_logits[bi, :int(lengths[bi].item()), :],
+                            min_confidence=min_correction_confidence,
+                        )
+                        for bi in range(len(out))
+                    ]
 
                 all_p.extend(out)
                 all_g.extend(true_seqs)
@@ -181,7 +197,7 @@ def train_loop(
         train_loss = total_loss / max(total_cnt,1)
         val_tok, val_seq, val_feas = run_eval(valid_samples) if valid_samples else (0.0,0.0,0.0)
 
-        print(f"[epoch {ep:02d}] tf_ratio={teacher_forcing_ratio(ep):.3f} traj_graph={traj_graph_source} loss={train_loss:.4f} val_tok={val_tok:.3f} val_seq={val_seq:.3f} feas@k={val_feas:.3f}")
+        print(f"[epoch {ep:02d}] tf_ratio={teacher_forcing_ratio(ep):.3f} traj_graph={traj_graph_source} conf_gate={min_correction_confidence:.2f} loss={train_loss:.4f} val_tok={val_tok:.3f} val_seq={val_seq:.3f} feas@k={val_feas:.3f}")
 
         score = val_tok + 0.1 * val_feas
         if score > best:
