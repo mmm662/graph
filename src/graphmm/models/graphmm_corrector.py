@@ -164,3 +164,22 @@ class GraphMMCorrector(nn.Module):
 def decode_argmax(unary_logits, lengths):
     pred = torch.argmax(unary_logits, dim=-1)
     return [pred[i,:int(lengths[i].item())].tolist() for i in range(pred.size(0))]
+
+
+@torch.no_grad()
+def confidence_gate_sequence(raw_seq: List[int], corrected_seq: List[int], unary_logits: torch.Tensor, min_confidence: float) -> List[int]:
+    if min_confidence <= 0.0:
+        return corrected_seq
+
+    L = min(len(raw_seq), len(corrected_seq), int(unary_logits.size(0)))
+    if L <= 0:
+        return corrected_seq
+
+    probs = torch.softmax(unary_logits[:L], dim=-1)
+    conf = torch.max(probs, dim=-1).values
+
+    out = corrected_seq[:]
+    for t in range(L):
+        if float(conf[t].item()) < float(min_confidence):
+            out[t] = raw_seq[t]
+    return out
