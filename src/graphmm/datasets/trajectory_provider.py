@@ -130,7 +130,7 @@ def load_pts_coord_any(mat_path: str):
     f = pts[2, :].astype(int)
     return x, y, f
 
-def coords_to_global_node_seq(x, y, f, gb, floor_base: int = 1):
+def coords_to_global_node_seq(x, y, f, gb, floor_base: int = 1, xy_mode: str = "xy"):
     """
     (x,y,floor) -> global node id sequence
     floor_base=1: 轨迹楼层为 1..5
@@ -138,9 +138,35 @@ def coords_to_global_node_seq(x, y, f, gb, floor_base: int = 1):
     """
     coord = gb.coord_xy.detach().cpu().numpy()       # [N,2]
     floor_id = gb.floor_id.detach().cpu().numpy()    # [N]
+
+    x_use, y_use = x, y
+    if xy_mode not in {"xy", "yx", "auto"}:
+        raise ValueError(f"xy_mode must be one of ['xy','yx','auto'], got: {xy_mode}")
+
+    if xy_mode == "yx":
+        x_use, y_use = y, x
+    elif xy_mode == "auto":
+        # Decide orientation by nearest-node distance on a small prefix.
+        T = min(30, len(x))
+        if T > 0:
+            d_xy = []
+            d_yx = []
+            for xi, yi, fi in zip(x[:T], y[:T], f[:T]):
+                fi0 = int(fi) - floor_base
+                idx = np.where(floor_id == fi0)[0]
+                if idx.size == 0:
+                    continue
+                sub = coord[idx]
+                d2_xy = (sub[:, 0] - xi) ** 2 + (sub[:, 1] - yi) ** 2
+                d2_yx = (sub[:, 0] - yi) ** 2 + (sub[:, 1] - xi) ** 2
+                d_xy.append(float(np.sqrt(d2_xy.min())))
+                d_yx.append(float(np.sqrt(d2_yx.min())))
+            if d_xy and d_yx and (np.mean(d_yx) < np.mean(d_xy)):
+                x_use, y_use = y, x
+
     seq = []
 
-    for xi, yi, fi in zip(x, y, f):
+    for xi, yi, fi in zip(x_use, y_use, f):
         fi0 = int(fi) - floor_base
         idx = np.where(floor_id == fi0)[0]
         if idx.size == 0:
@@ -185,6 +211,7 @@ def load_paired_samples_from_runs(
     traj_root: str,
     gb,
     floor_base: int = 1,
+    xy_mode: str = "xy",
 ):
     """
     从 traj_root 递归读取所有 *_neg_*.mat，并找到对应 *_gt_*.mat，返回 List[Sample(pred,true)]
@@ -198,8 +225,8 @@ def load_paired_samples_from_runs(
         x1,y1,f1 = load_pts_coord_any(neg_path)
         x2,y2,f2 = load_pts_coord_any(gt_path)
 
-        pred_seq = coords_to_global_node_seq(x1,y1,f1, gb, floor_base=floor_base)
-        true_seq = coords_to_global_node_seq(x2,y2,f2, gb, floor_base=floor_base)
+        pred_seq = coords_to_global_node_seq(x1, y1, f1, gb, floor_base=floor_base, xy_mode=xy_mode)
+        true_seq = coords_to_global_node_seq(x2, y2, f2, gb, floor_base=floor_base, xy_mode=xy_mode)
 
         # 长度保护
         L = min(len(pred_seq), len(true_seq))

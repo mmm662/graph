@@ -9,6 +9,7 @@ data:
   - data/mall/floor3.mat
   - data/mall/floor4.mat
   - data/mall/floor5.mat
+  traj_xy_mode: auto
 test:
   ckpt_path: runs/mall_final/checkpoint.pt
   test_dir: data/traj/test

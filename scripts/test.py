@@ -76,6 +76,7 @@ def main():
     ap.add_argument("--mat_paths", nargs="*", default=None)
     ap.add_argument("--floor_base", type=int, default=None, help="trajectory floor base: 1 for 1..5, 0 for 0..4")
     ap.add_argument("--device", default="auto")
+    ap.add_argument("--traj_xy_mode", default=None, choices=["xy", "yx", "auto"], help="trajectory coordinate order mapping")
     ap.add_argument("--max_print", type=int, default=30, help="max points to print per sequence")
     args = ap.parse_args()
 
@@ -98,6 +99,7 @@ def main():
     ckpt = args.ckpt or cfg.get("test", {}).get("ckpt_path", None)
     test_dir = args.test_dir or cfg.get("test", {}).get("test_dir", "data/traj/test")
     floor_base = args.floor_base if args.floor_base is not None else cfg.get("test", {}).get("floor_base", 1)
+    traj_xy_mode = args.traj_xy_mode or cfg.get("data", {}).get("traj_xy_mode", "auto")
 
     if ckpt is None:
         raise ValueError("ckpt_path is missing. Fill cfg.test.ckpt_path or pass --ckpt ...")
@@ -165,8 +167,8 @@ def main():
             x2, y2, f2 = load_pts_coord_any(gt_path)
 
             # map to node sequences
-            pred_seq = coords_to_global_node_seq(x1, y1, f1, gb, floor_base=floor_base)
-            true_seq = coords_to_global_node_seq(x2, y2, f2, gb, floor_base=floor_base)
+            pred_seq = coords_to_global_node_seq(x1, y1, f1, gb, floor_base=floor_base, xy_mode=traj_xy_mode)
+            true_seq = coords_to_global_node_seq(x2, y2, f2, gb, floor_base=floor_base, xy_mode=traj_xy_mode)
 
             L = min(len(pred_seq), len(true_seq))
             if L < 3:

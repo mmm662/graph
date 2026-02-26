@@ -96,8 +96,9 @@ def main():
     random.shuffle(samples)
     k = int(len(samples) * cfg["sim"]["train_ratio"])
     # train_samples, valid_samples = samples[:k], samples[k:]
-    train_samples = load_paired_samples_from_runs("data/traj/train", gb, floor_base=1)
-    valid_samples = load_paired_samples_from_runs("data/traj/valid", gb, floor_base=1)
+    xy_mode = cfg["data"].get("traj_xy_mode", "auto")
+    train_samples = load_paired_samples_from_runs("data/traj/train", gb, floor_base=1, xy_mode=xy_mode)
+    valid_samples = load_paired_samples_from_runs("data/traj/valid", gb, floor_base=1, xy_mode=xy_mode)
 
     print(f"[data] train={len(train_samples)} valid={len(valid_samples)}")
 
