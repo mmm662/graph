@@ -1,0 +1,5 @@
+Metadata-Version: 2.4
+Name: graphmm-mall
+Version: 0.1.0
+Summary: Multi-floor mall trajectory correction (Edge-aware GINE + TrajGraph + CRF)
+Requires-Python: >=3.9

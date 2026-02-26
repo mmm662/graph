@@ -1,0 +1,50 @@
+data:
+  ppm: 1.0
+  directed_road: true
+  add_vertical_bidirectional: true
+  coord_match_eps: 1.0
+  mat_paths:
+    - data/mall/floor1.mat
+    - data/mall/floor2.mat
+    - data/mall/floor3.mat
+    - data/mall/floor4.mat
+    - data/mall/floor5.mat
+
+test:
+  ckpt_path: runs/mall_final/checkpoint.pt
+  test_dir: data/traj/test
+  floor_base: 1
+
+sim:
+  num_samples: 1200
+  seq_len: 30
+  noise_rate: 0.18
+  train_ratio: 0.85
+  prefer_intrafloor: true
+
+model:
+  road_dim: 64
+  gin_layers: 2
+  gin_mlp_hidden: 128
+  dropout: 0.1
+  temperature: 2.0
+  floor_emb_dim: 8
+  traj_gcn_layers: 1
+  use_crf: false
+  unreachable_penalty: -5000.0
+
+train:
+  seed: 42
+  epochs: 15
+  batch_size: 16
+  lr: 0.001
+  device: auto
+  k_hop: 4
+  top_r_train: 30
+  top_r_decode: 80
+  ss_start: 1.0      # 第1个epoch使用true的概率（1.0=纯true）
+  ss_end: 0.2        # 最后一个epoch使用true的概率（0.2=更多用pred）
+  ss_mode: linear    # 线性衰减
+
+output:
+  run_name: mall_final
