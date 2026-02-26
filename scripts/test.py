@@ -1,4 +1,4 @@
-# scripts/test.py
+# scripts/read_mat_test.py
 import argparse
 import os
 import sys
@@ -65,6 +65,7 @@ def ids_to_xyzf(seq, gb, floor_base_out: int = 1):
         f = int(floor[int(nid)]) + floor_base_out
         out.append((int(nid), float(x), float(y), int(f)))
     return out
+
 
 
 def main():
@@ -134,6 +135,7 @@ def main():
         traj_gcn_layers=cfg["model"]["traj_gcn_layers"],
         use_crf=cfg["model"]["use_crf"],
         unreachable_penalty=cfg["model"]["unreachable_penalty"],
+        input_anchor_bias=cfg["model"].get("input_anchor_bias", 0.0),
     ).to(device)
 
     state = torch.load(ckpt, map_location=device)

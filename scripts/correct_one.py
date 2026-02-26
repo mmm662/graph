@@ -16,6 +16,7 @@ from graphmm.utils.graph import build_adj_list, k_hop_neighbors
 def parse_int_list(s: str):
     return [int(x) for x in s.split(",") if x.strip()]
 
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--config", default=str(ROOT / "configs/mall_train.yaml"))
@@ -56,6 +57,7 @@ def main():
         traj_gcn_layers=cfg["model"]["traj_gcn_layers"],
         use_crf=cfg["model"]["use_crf"],
         unreachable_penalty=cfg["model"]["unreachable_penalty"],
+        input_anchor_bias=cfg["model"].get("input_anchor_bias", 0.0),
     ).to(device)
 
     ckpt = torch.load(args.ckpt, map_location=device)
@@ -91,9 +93,10 @@ def main():
     )
 
     # 4) decode
+    road_adj_list = build_adj_list(gb.num_nodes, gb.edge_index)
+    allowed_prev = k_hop_neighbors(road_adj_list, k=cfg["train"]["k_hop"])
+
     if cfg["model"]["use_crf"]:
-        road_adj_list = build_adj_list(gb.num_nodes, gb.edge_index)
-        allowed_prev = k_hop_neighbors(road_adj_list, k=cfg["train"]["k_hop"])
         path = model.crf.viterbi_one(
             unary_logits=unary_logits[0, :len(pred_seq), :],
             H=H_R,
