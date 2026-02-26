@@ -136,6 +136,7 @@ def main():
         ss_start=cfg["train"].get("ss_start", 1.0),
         ss_end=cfg["train"].get("ss_end", 1.0),
         ss_mode=cfg["train"].get("ss_mode", "linear"),
+        traj_graph_source=cfg["train"].get("traj_graph_source", "mixed"),
     )
 
 if __name__ == "__main__":

@@ -25,6 +25,7 @@ def train_loop(
     ss_start: float = 1.0,
     ss_end: float = 1.0,
     ss_mode: str = "linear",
+    traj_graph_source: str = "mixed",
 ):
     os.makedirs(run_dir, exist_ok=True)
     model = model.to(device)
@@ -39,8 +40,21 @@ def train_loop(
     allowed_prev = k_hop_neighbors(road_adj_list, k=k_hop) if use_crf else None
 
     def build_traj_graph_from_samples(samples: List[Sample]) -> Tuple[torch.Tensor, torch.Tensor]:
+        if traj_graph_source not in {"pred", "true", "mixed"}:
+            raise ValueError(f"traj_graph_source must be one of ['pred', 'true', 'mixed'], got: {traj_graph_source}")
+
+        seqs = []
+        for s in samples:
+            if traj_graph_source == "pred":
+                seqs.append(s.pred)
+            elif traj_graph_source == "true":
+                seqs.append(s.true)
+            else:
+                seqs.append(s.pred)
+                seqs.append(s.true)
+
         # edges with counts
-        ecount = build_transition_graph([s.pred for s in samples], directed=True, min_count=1)
+        ecount = build_transition_graph(seqs, directed=True, min_count=1)
         if not ecount:
             # dummy self-loop
             idx = torch.arange(graph_batch.num_nodes, device=device)
@@ -167,7 +181,7 @@ def train_loop(
         train_loss = total_loss / max(total_cnt,1)
         val_tok, val_seq, val_feas = run_eval(valid_samples) if valid_samples else (0.0,0.0,0.0)
 
-        print(f"[epoch {ep:02d}] tf_ratio={teacher_forcing_ratio(ep):.3f} loss={train_loss:.4f} val_tok={val_tok:.3f} val_seq={val_seq:.3f} feas@k={val_feas:.3f}")
+        print(f"[epoch {ep:02d}] tf_ratio={teacher_forcing_ratio(ep):.3f} traj_graph={traj_graph_source} loss={train_loss:.4f} val_tok={val_tok:.3f} val_seq={val_seq:.3f} feas@k={val_feas:.3f}")
 
         score = val_tok + 0.1 * val_feas
         if score > best:
