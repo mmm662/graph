@@ -74,7 +74,7 @@ def main():
         edge_attr=gb.edge_attr,
         traj_edge_index=None,
         traj_edge_weight=None,
-        teacher_forcing=None
+        teacher_forcing=pred
     )
 
     # 4) decode
