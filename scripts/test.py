@@ -1,4 +1,4 @@
-# scripts/test.py
+# scripts/read_mat_test.py
 import argparse
 import os
 import sys
