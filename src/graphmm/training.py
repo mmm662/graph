@@ -101,9 +101,26 @@ def train_loop(
                         L = int(lengths[bi].item())
                         unary_i = unary_logits[bi,:L,:]
                         path = model.crf.viterbi_one(unary_i, H_R, allowed_prev, top_r=top_r_decode)
+                        path = confidence_gate_sequence(
+                            raw_seq=pred_seqs[bi],
+                            corrected_seq=path,
+                            unary_logits=unary_i,
+                            min_confidence=min_correction_confidence,
+                            min_logit_gain=min_correction_logit_gain,
+                        )
                         out.append(path)
                 else:
                     out = decode_argmax(unary_logits, lengths)
+                    out = [
+                        confidence_gate_sequence(
+                            raw_seq=pred_seqs[bi],
+                            corrected_seq=out[bi],
+                            unary_logits=unary_logits[bi, :int(lengths[bi].item()), :],
+                            min_confidence=min_correction_confidence,
+                            min_logit_gain=min_correction_logit_gain,
+                        )
+                        for bi in range(len(out))
+                    ]
 
                 out_gated = [
                     confidence_gate_sequence(
