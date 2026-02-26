@@ -30,6 +30,6 @@ def read_mat(mat_file_path: str, ppm: float) -> FloorMap:
     new_col = np.zeros((E.shape[0], 1), dtype=E.dtype)
     E = np.hstack((E, new_col))
 
-    coord = (v - 1) * ppm
-    coord = coord[:, [1, 0]]  # to (x,y)
-    return FloorMap(coord_xy=coord.astype(np.float32), E=E, bump=bump, row=row, col=col)
+    # coord = (v - 1) * ppm
+    # coord = coord[:, [1, 0]]  # to (x,y)
+    return FloorMap(coord_xy=v.astype(np.float32), E=E, bump=bump, row=row, col=col)
