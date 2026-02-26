@@ -116,6 +116,7 @@ def main():
         use_crf=cfg["model"]["use_crf"],
         unreachable_penalty=cfg["model"]["unreachable_penalty"],
         input_anchor_bias=cfg["model"].get("input_anchor_bias", 0.0),
+        apply_input_anchor_bias_inference=cfg["model"].get("apply_input_anchor_bias_inference", False),
     )
 
     run_dir = ROOT / "runs" / cfg["output"]["run_name"]
@@ -136,6 +137,11 @@ def main():
         ss_start=cfg["train"].get("ss_start", 1.0),
         ss_end=cfg["train"].get("ss_end", 1.0),
         ss_mode=cfg["train"].get("ss_mode", "linear"),
+        traj_graph_source=cfg["train"].get("traj_graph_source", "mixed"),
+        min_correction_confidence=cfg["model"].get("min_correction_confidence", 0.0),
+        min_correction_logit_gain=cfg["model"].get("min_correction_logit_gain", 0.0),
+        eval_apply_gate=cfg["train"].get("eval_apply_gate", False),
+        crf_train_loss=cfg["train"].get("crf_train_loss", "ce"),
     )
 
 if __name__ == "__main__":

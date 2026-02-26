@@ -5,7 +5,7 @@ import torch
 from tqdm import tqdm
 
 from graphmm.datasets.trajectory_provider import pad_batch, PADDING_ID, Sample, build_transition_graph
-from graphmm.models.graphmm_corrector import GraphMMCorrector, decode_argmax
+from graphmm.models.graphmm_corrector import GraphMMCorrector, decode_argmax, confidence_gate_sequence
 from graphmm.utils.graph import token_seq_accuracy, path_feasibility_rate, build_adj_list, k_hop_neighbors
 
 def train_loop(
@@ -25,7 +25,16 @@ def train_loop(
     ss_start: float = 1.0,
     ss_end: float = 1.0,
     ss_mode: str = "linear",
+    traj_graph_source: str = "mixed",
+    min_correction_confidence: float = 0.0,
+    min_correction_logit_gain: float = 0.0,
+    eval_apply_gate: bool = False,
+    crf_train_loss: str = "ce",
 ):
+    crf_train_loss = str(crf_train_loss).lower()
+    if crf_train_loss not in {"ce", "crf"}:
+        raise ValueError(f"crf_train_loss must be one of ['ce', 'crf'], got: {crf_train_loss}")
+
     os.makedirs(run_dir, exist_ok=True)
     model = model.to(device)
     opt = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=1e-4)
@@ -39,8 +48,22 @@ def train_loop(
     allowed_prev = k_hop_neighbors(road_adj_list, k=k_hop) if use_crf else None
 
     def build_traj_graph_from_samples(samples: List[Sample]) -> Tuple[torch.Tensor, torch.Tensor]:
+        source = str(traj_graph_source).lower()
+        if source not in {"pred", "true", "mixed"}:
+            raise ValueError(f"traj_graph_source must be one of ['pred', 'true', 'mixed'], got: {traj_graph_source}")
+
+        seqs = []
+        for s in samples:
+            if source == "pred":
+                seqs.append(s.pred)
+            elif source == "true":
+                seqs.append(s.true)
+            else:
+                seqs.append(s.pred)
+                seqs.append(s.true)
+
         # edges with counts
-        ecount = build_transition_graph([s.pred for s in samples], directed=True, min_count=1)
+        ecount = build_transition_graph(seqs, directed=True, min_count=1)
         if not ecount:
             # dummy self-loop
             idx = torch.arange(graph_batch.num_nodes, device=device)
@@ -57,9 +80,8 @@ def train_loop(
 
     def run_eval(samples: List[Sample]):
         model.eval()
-        all_p=[]; all_g=[]
+        raw_all=[]; pred_all=[]; gated_all=[]; all_g=[]
         with torch.no_grad():
-            traj_edge_index, traj_edge_weight = build_traj_graph_from_samples(train_samples)
             for i in range(0, len(samples), batch_size):
                 batch = samples[i:i+batch_size]
                 pred_seqs=[s.pred for s in batch]
@@ -67,6 +89,7 @@ def train_loop(
                 pred_pad, lengths = pad_batch(pred_seqs, pad_id=PADDING_ID)
                 pred_pad = pred_pad.to(device); lengths = lengths.to(device)
 
+                traj_edge_index, traj_edge_weight = build_traj_graph_from_samples(batch)
                 unary_logits, H_R = model.forward_unary(
                     pred_pad, lengths,
                     node_num_feat=node_num_feat,
@@ -87,12 +110,47 @@ def train_loop(
                 else:
                     out = decode_argmax(unary_logits, lengths)
 
-                all_p.extend(out)
+                out_gated = [
+                    confidence_gate_sequence(
+                        raw_seq=pred_seqs[bi],
+                        corrected_seq=out[bi],
+                        unary_logits=unary_logits[bi, :int(lengths[bi].item()), :],
+                        min_confidence=min_correction_confidence,
+                        min_logit_gain=min_correction_logit_gain,
+                    )
+                    for bi in range(len(out))
+                ]
+
+                raw_all.extend(pred_seqs)
+                pred_all.extend(out)
+                gated_all.extend(out_gated)
                 all_g.extend(true_seqs)
 
-        tok, seq = token_seq_accuracy(all_p, all_g)
-        feas = path_feasibility_rate(all_p, road_adj_list, k_hop=max(1,k_hop))
-        return tok, seq, feas
+        raw_tok, _ = token_seq_accuracy(raw_all, all_g)
+        pred_tok, pred_seq = token_seq_accuracy(pred_all, all_g)
+        gated_tok, gated_seq = token_seq_accuracy(gated_all, all_g)
+        final_pred = gated_all if eval_apply_gate else pred_all
+        feas = path_feasibility_rate(final_pred, road_adj_list, k_hop=max(1,k_hop))
+
+        total_tokens = 0
+        changed_tokens = 0
+        for raw, corr in zip(raw_all, final_pred):
+            L = min(len(raw), len(corr))
+            total_tokens += L
+            changed_tokens += sum(int(a != b) for a, b in zip(raw[:L], corr[:L]))
+        change_ratio = (changed_tokens / total_tokens) if total_tokens > 0 else 0.0
+
+        return {
+            "raw_tok": raw_tok,
+            "pred_tok": pred_tok,
+            "pred_seq": pred_seq,
+            "gated_tok": gated_tok,
+            "gated_seq": gated_seq,
+            "final_tok": gated_tok if eval_apply_gate else pred_tok,
+            "final_seq": gated_seq if eval_apply_gate else pred_seq,
+            "feas": feas,
+            "changed": change_ratio,
+        }
 
 
     def teacher_forcing_ratio(epoch_idx: int) -> float:
@@ -144,7 +202,7 @@ def train_loop(
                 teacher_forcing=tf_in
             )
 
-            if use_crf:
+            if use_crf and crf_train_loss == "crf":
                 loss = torch.tensor(0.0, device=device)
                 for bi in range(len(batch)):
                     L = int(lengths[bi].item())
@@ -165,14 +223,23 @@ def train_loop(
             total_cnt += len(batch)
 
         train_loss = total_loss / max(total_cnt,1)
-        val_tok, val_seq, val_feas = run_eval(valid_samples) if valid_samples else (0.0,0.0,0.0)
+        if valid_samples:
+            em = run_eval(valid_samples)
+        else:
+            em = {"raw_tok":0.0,"pred_tok":0.0,"pred_seq":0.0,"gated_tok":0.0,"gated_seq":0.0,"final_tok":0.0,"final_seq":0.0,"feas":0.0,"changed":0.0}
 
-        print(f"[epoch {ep:02d}] tf_ratio={teacher_forcing_ratio(ep):.3f} loss={train_loss:.4f} val_tok={val_tok:.3f} val_seq={val_seq:.3f} feas@k={val_feas:.3f}")
+        print(
+            f"[epoch {ep:02d}] tf_ratio={teacher_forcing_ratio(ep):.3f} traj_graph={str(traj_graph_source).lower()} "
+            f"conf_gate={min_correction_confidence:.2f} gain_gate={min_correction_logit_gain:.2f} "
+            f"eval_gate={int(eval_apply_gate)} crf_loss={crf_train_loss} loss={train_loss:.4f} "
+            f"raw_tok={em['raw_tok']:.3f} pred_tok={em['pred_tok']:.3f} gated_tok={em['gated_tok']:.3f} "
+            f"final_tok={em['final_tok']:.3f} final_seq={em['final_seq']:.3f} changed={em['changed']:.3f} feas@k={em['feas']:.3f}"
+        )
 
-        score = val_tok + 0.1 * val_feas
+        score = em["final_tok"] + 0.1 * em["feas"]
         if score > best:
             best = score
             torch.save(
-                {"model": model.state_dict(), "epoch": ep, "val_tok": val_tok, "val_seq": val_seq, "feas": val_feas},
+                {"model": model.state_dict(), "epoch": ep, "val_tok": em["final_tok"], "val_seq": em["final_seq"], "feas": em["feas"], "raw_tok": em["raw_tok"], "pred_tok": em["pred_tok"], "gated_tok": em["gated_tok"], "changed": em["changed"]},
                 os.path.join(run_dir, "checkpoint.pt")
             )

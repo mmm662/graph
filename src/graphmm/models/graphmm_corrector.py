@@ -26,6 +26,7 @@ class GraphMMCorrector(nn.Module):
         use_crf: bool = True,
         unreachable_penalty: float = -1e4,
         input_anchor_bias: float = 0.0,
+        apply_input_anchor_bias_inference: bool = False,
     ):
         super().__init__()
         self.num_nodes = num_nodes
@@ -33,6 +34,7 @@ class GraphMMCorrector(nn.Module):
         self.temperature = temperature
         self.use_crf = use_crf
         self.input_anchor_bias = float(input_anchor_bias)
+        self.apply_input_anchor_bias_inference = bool(apply_input_anchor_bias_inference)
 
         self.node_encoder = NodeFeatureEncoder(num_floors, node_num_dim, floor_emb_dim, road_dim)
 
@@ -136,7 +138,8 @@ class GraphMMCorrector(nn.Module):
                 prev_emb = H_R[pred_ids]
 
             logits = torch.cat(logits_steps, dim=1)
-            logits = self._apply_input_anchor_bias(logits, pred_safe, mask)
+            if self.apply_input_anchor_bias_inference:
+                logits = self._apply_input_anchor_bias(logits, pred_safe, mask)
             return logits, H_R
 
         tf = teacher_forcing.clone()
@@ -157,10 +160,40 @@ class GraphMMCorrector(nn.Module):
 
         Z = F.normalize(self.dec_out(torch.cat([dec_out, ctx_all], dim=-1)), p=2, dim=-1)
         logits = self.hidden_similarity(Z, H_R)
-        logits = self._apply_input_anchor_bias(logits, pred_safe, mask)
         return logits, H_R
 
 @torch.no_grad()
 def decode_argmax(unary_logits, lengths):
     pred = torch.argmax(unary_logits, dim=-1)
     return [pred[i,:int(lengths[i].item())].tolist() for i in range(pred.size(0))]
+
+
+@torch.no_grad()
+def confidence_gate_sequence(
+    raw_seq: List[int],
+    corrected_seq: List[int],
+    unary_logits: torch.Tensor,
+    min_confidence: float,
+    min_logit_gain: float = 0.0,
+) -> List[int]:
+    L = min(len(raw_seq), len(corrected_seq), int(unary_logits.size(0)))
+    if L <= 0:
+        return corrected_seq
+
+    probs = torch.softmax(unary_logits[:L], dim=-1)
+    conf = torch.max(probs, dim=-1).values
+
+    out = corrected_seq[:]
+    for t in range(L):
+        raw_id = int(raw_seq[t])
+        corr_id = int(corrected_seq[t])
+        if raw_id == corr_id:
+            continue
+
+        conf_ok = (float(conf[t].item()) >= float(min_confidence))
+        gain = float(unary_logits[t, corr_id].item() - unary_logits[t, raw_id].item())
+        gain_ok = (gain >= float(min_logit_gain))
+
+        if not (conf_ok and gain_ok):
+            out[t] = raw_id
+    return out

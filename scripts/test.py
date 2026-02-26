@@ -14,7 +14,7 @@ if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 from graphmm.io.multifloor_builder import build_multifloor_graph_with_features
-from graphmm.models.graphmm_corrector import GraphMMCorrector, decode_argmax
+from graphmm.models.graphmm_corrector import GraphMMCorrector, decode_argmax, confidence_gate_sequence
 from graphmm.utils.graph import (
     build_adj_list,
     k_hop_neighbors,
@@ -100,6 +100,8 @@ def main():
     test_dir = args.test_dir or cfg.get("test", {}).get("test_dir", "data/traj/test")
     floor_base = args.floor_base if args.floor_base is not None else cfg.get("test", {}).get("floor_base", 1)
     traj_xy_mode = args.traj_xy_mode or cfg.get("data", {}).get("traj_xy_mode", "auto")
+    min_correction_confidence = float(cfg.get("model", {}).get("min_correction_confidence", 0.0))
+    min_correction_logit_gain = float(cfg.get("model", {}).get("min_correction_logit_gain", 0.0))
 
     if ckpt is None:
         raise ValueError("ckpt_path is missing. Fill cfg.test.ckpt_path or pass --ckpt ...")
@@ -138,6 +140,7 @@ def main():
         use_crf=cfg["model"]["use_crf"],
         unreachable_penalty=cfg["model"]["unreachable_penalty"],
         input_anchor_bias=cfg["model"].get("input_anchor_bias", 0.0),
+        apply_input_anchor_bias_inference=cfg["model"].get("apply_input_anchor_bias_inference", False),
     ).to(device)
 
     state = torch.load(ckpt, map_location=device)
@@ -158,7 +161,7 @@ def main():
             f"Make sure you have both *_neg_*.mat and matching *_gt_*.mat."
         )
 
-    preds, golds = [], []
+    raw_preds, preds, golds = [], [], []
 
     with torch.no_grad():
         for neg_path, gt_path in pairs:
@@ -216,6 +219,15 @@ def main():
             else:
                 corrected = decode_argmax(unary_logits, lengths)[0]
 
+            corrected = confidence_gate_sequence(
+                raw_seq=pred_seq,
+                corrected_seq=corrected,
+                unary_logits=unary,
+                min_confidence=min_correction_confidence,
+                min_logit_gain=min_correction_logit_gain,
+            )
+
+            raw_preds.append(pred_seq)
             preds.append(corrected)
             golds.append(true_seq)
 
@@ -247,9 +259,19 @@ def main():
             print("\n[gt (id,x,y,f)]")
             print(ids_to_xyzf(true_seq[:maxp], gb, floor_base_out=floor_base_out))
 
+    raw_tok, raw_seq = token_seq_accuracy(raw_preds, golds)
     tok, seq = token_seq_accuracy(preds, golds)
     feas = path_feasibility_rate(preds, road_adj_list, k_hop=max(1, k_hop))
-    print(f"\n[TEST] n={len(preds)} tok={tok:.3f} seq={seq:.3f} feas@k={feas:.3f}")
+
+    total_tokens = 0
+    changed_tokens = 0
+    for raw, corr in zip(raw_preds, preds):
+        L = min(len(raw), len(corr))
+        total_tokens += L
+        changed_tokens += sum(int(a != b) for a, b in zip(raw[:L], corr[:L]))
+    change_ratio = (changed_tokens / total_tokens) if total_tokens > 0 else 0.0
+
+    print(f"\n[TEST] n={len(preds)} raw_tok={raw_tok:.3f} tok={tok:.3f} raw_seq={raw_seq:.3f} seq={seq:.3f} feas@k={feas:.3f} changed={change_ratio:.3f} conf_gate={min_correction_confidence:.2f} gain_gate={min_correction_logit_gain:.2f}")
 
 
 if __name__ == "__main__":
