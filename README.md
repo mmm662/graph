@@ -118,7 +118,8 @@ python scripts/test.py --config configs/mall_train.yaml --max_print 10
 
 ### 6.1 解码与纠错
 - `model.use_crf`：是否启用 CRF
-- `train.top_r_train / train.top_r_decode`：CRF 候选搜索宽度
+- `train.top_r_train / train.top_r_decode`：CRF 候选搜索宽度上限
+- `train.adaptive_top_r / train.adaptive_top_r_min`：按模型当前不确定性动态调整候选宽度（训练/推理一致）
 - `model.min_correction_confidence`：置信度阈值
 - `model.min_correction_logit_gain`：logit 增益阈值
 - `model.apply_input_anchor_bias_inference`：是否在推理时给原输入 token 加偏置（建议默认 `false`，防止复制输入塌缩）

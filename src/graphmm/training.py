@@ -6,6 +6,7 @@ from tqdm import tqdm
 
 from graphmm.datasets.trajectory_provider import pad_batch, PADDING_ID, Sample, build_transition_graph
 from graphmm.models.graphmm_corrector import GraphMMCorrector, decode_argmax, confidence_gate_sequence
+from graphmm.models.crf import adaptive_top_r_from_unary
 from graphmm.utils.graph import token_seq_accuracy, path_feasibility_rate, build_adj_list, k_hop_neighbors
 
 def train_loop(
@@ -22,6 +23,8 @@ def train_loop(
     top_r_train: int,
     top_r_decode: int,
     use_crf: bool,
+    adaptive_top_r: bool = True,
+    adaptive_top_r_min: int = 32,
     ss_start: float = 1.0,
     ss_end: float = 1.0,
     ss_mode: str = "linear",
@@ -46,6 +49,11 @@ def train_loop(
 
     road_adj_list = build_adj_list(graph_batch.num_nodes, edge_index)
     allowed_prev = k_hop_neighbors(road_adj_list, k=k_hop) if use_crf else None
+
+    def pick_top_r(unary_logits: torch.Tensor, top_r_max: int) -> int:
+        if not adaptive_top_r:
+            return int(top_r_max)
+        return adaptive_top_r_from_unary(unary_logits, min_top_r=adaptive_top_r_min, max_top_r=top_r_max)
 
     def build_traj_graph_from_samples(samples: List[Sample]) -> Tuple[torch.Tensor, torch.Tensor]:
         source = str(traj_graph_source).lower()
@@ -105,7 +113,7 @@ def train_loop(
                     for bi in range(len(batch)):
                         L = int(lengths[bi].item())
                         unary_i = unary_logits[bi,:L,:]
-                        path = model.crf.viterbi_one(unary_i, H_R, allowed_prev, top_r=top_r_decode)
+                        path = model.crf.viterbi_one(unary_i, H_R, allowed_prev, top_r=pick_top_r(unary_i, top_r_decode))
                         path = confidence_gate_sequence(
                             raw_seq=pred_seqs[bi],
                             corrected_seq=path,
@@ -236,7 +244,7 @@ def train_loop(
                     L = int(lengths[bi].item())
                     unary_i = unary_logits[bi,:L,:]
                     gold_i = true_seqs[bi]
-                    loss = loss + model.crf.nll_one(unary_i, gold_i, H_R, allowed_prev, top_r=top_r_train, train_mode=True)
+                    loss = loss + model.crf.nll_one(unary_i, gold_i, H_R, allowed_prev, top_r=pick_top_r(unary_i, top_r_train), train_mode=True)
                 loss = loss / max(len(batch),1)
             else:
                 B, Lm, N = unary_logits.shape

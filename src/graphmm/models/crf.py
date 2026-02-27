@@ -4,6 +4,27 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+
+def adaptive_top_r_from_unary(
+    unary_logits: torch.Tensor,
+    min_top_r: int,
+    max_top_r: int,
+) -> int:
+    """Compute candidate size from model uncertainty (higher entropy => larger top_r)."""
+    _, n_nodes = unary_logits.shape
+    lo = max(1, min(int(min_top_r), n_nodes))
+    hi = max(lo, min(int(max_top_r), n_nodes))
+    if lo == hi:
+        return lo
+
+    probs = torch.softmax(unary_logits, dim=-1).clamp(min=1e-9)
+    entropy = -(probs * probs.log()).sum(dim=-1)
+    entropy_norm = (entropy / torch.log(torch.tensor(float(n_nodes), device=unary_logits.device))).mean()
+    entropy_norm = float(torch.clamp(entropy_norm, 0.0, 1.0).item())
+
+    return int(round(lo + (hi - lo) * entropy_norm))
+
+
 class GraphCRF(nn.Module):
     """Candidate-pruned CRF with bilinear pairwise and k-hop reachability constraint."""
     def __init__(self, emb_dim: int, unreachable_penalty: float = -1e4):

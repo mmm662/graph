@@ -43,6 +43,8 @@ train:
   k_hop: 4
   top_r_train: 64
   top_r_decode: 128
+  adaptive_top_r: true
+  adaptive_top_r_min: 24
   ss_start: 0.8
   ss_end: 0.0
   ss_mode: linear
