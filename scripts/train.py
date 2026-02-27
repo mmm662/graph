@@ -133,6 +133,8 @@ def main():
         k_hop=cfg["train"]["k_hop"],
         top_r_train=cfg["train"]["top_r_train"],
         top_r_decode=cfg["train"]["top_r_decode"],
+        adaptive_top_r=cfg["train"].get("adaptive_top_r", True),
+        adaptive_top_r_min=cfg["train"].get("adaptive_top_r_min", 32),
         use_crf=cfg["model"]["use_crf"],
         ss_start=cfg["train"].get("ss_start", 1.0),
         ss_end=cfg["train"].get("ss_end", 1.0),

@@ -15,6 +15,7 @@ if str(SRC) not in sys.path:
 
 from graphmm.io.multifloor_builder import build_multifloor_graph_with_features
 from graphmm.models.graphmm_corrector import GraphMMCorrector, decode_argmax, confidence_gate_sequence
+from graphmm.models.crf import adaptive_top_r_from_unary
 from graphmm.utils.graph import (
     build_adj_list,
     k_hop_neighbors,
@@ -102,6 +103,8 @@ def main():
     traj_xy_mode = args.traj_xy_mode or cfg.get("data", {}).get("traj_xy_mode", "auto")
     min_correction_confidence = float(cfg.get("model", {}).get("min_correction_confidence", 0.0))
     min_correction_logit_gain = float(cfg.get("model", {}).get("min_correction_logit_gain", 0.0))
+    adaptive_top_r = bool(cfg.get("train", {}).get("adaptive_top_r", True))
+    adaptive_top_r_min = int(cfg.get("train", {}).get("adaptive_top_r_min", 32))
 
     if ckpt is None:
         raise ValueError("ckpt_path is missing. Fill cfg.test.ckpt_path or pass --ckpt ...")
@@ -210,11 +213,13 @@ def main():
             unary = unary_logits[0, :L, :]
 
             if cfg["model"]["use_crf"]:
+                top_r_decode = int(cfg["train"]["top_r_decode"])
+                top_r = adaptive_top_r_from_unary(unary, min_top_r=adaptive_top_r_min, max_top_r=top_r_decode) if adaptive_top_r else top_r_decode
                 corrected = model.crf.viterbi_one(
                     unary_logits=unary,
                     H=H_R,
                     allowed_prev=allowed_prev,
-                    top_r=int(cfg["train"]["top_r_decode"])
+                    top_r=top_r
                 )
             else:
                 corrected = decode_argmax(unary_logits, lengths)[0]

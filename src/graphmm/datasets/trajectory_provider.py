@@ -63,7 +63,8 @@ def sim_samples_on_graph(
 
     def corrupt(seq: List[int]) -> List[int]:
         out = seq[:]
-        for t in range(len(out)):
+        # 默认轨迹起点坐标正确：不对 t=0 注入噪声
+        for t in range(1, len(out)):
             if random.random() < noise_rate:
                 cur = out[t]
                 neis = adj_list[cur]
@@ -234,6 +235,9 @@ def load_paired_samples_from_runs(
             continue
         pred_seq = pred_seq[:L]
         true_seq = true_seq[:L]
+
+        # 默认每条轨迹起点正确：以观测起点作为监督锚点
+        true_seq[0] = pred_seq[0]
         samples.append(Sample(pred=pred_seq, true=true_seq))
 
     return samples
