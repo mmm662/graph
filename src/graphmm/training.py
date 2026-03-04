@@ -134,12 +134,22 @@ def train_loop(
         feas = path_feasibility_rate(final_pred, road_adj_list, k_hop=max(1,k_hop))
 
         total_tokens = 0
-        changed_tokens = 0
-        for raw, corr in zip(raw_all, final_pred):
-            L = min(len(raw), len(corr))
-            total_tokens += L
-            changed_tokens += sum(int(a != b) for a, b in zip(raw[:L], corr[:L]))
-        change_ratio = (changed_tokens / total_tokens) if total_tokens > 0 else 0.0
+        pred_changed_tokens = 0
+        gated_changed_tokens = 0
+        final_changed_tokens = 0
+        for raw, pred_corr, gated_corr, final_corr in zip(raw_all, pred_all, gated_all, final_pred):
+            Lp = min(len(raw), len(pred_corr))
+            Lg = min(len(raw), len(gated_corr))
+            Lf = min(len(raw), len(final_corr))
+            total_tokens += Lf
+            pred_changed_tokens += sum(int(a != b) for a, b in zip(raw[:Lp], pred_corr[:Lp]))
+            gated_changed_tokens += sum(int(a != b) for a, b in zip(raw[:Lg], gated_corr[:Lg]))
+            final_changed_tokens += sum(int(a != b) for a, b in zip(raw[:Lf], final_corr[:Lf]))
+
+        pred_change_ratio = (pred_changed_tokens / total_tokens) if total_tokens > 0 else 0.0
+        gated_change_ratio = (gated_changed_tokens / total_tokens) if total_tokens > 0 else 0.0
+        final_change_ratio = (final_changed_tokens / total_tokens) if total_tokens > 0 else 0.0
+        gate_keep_ratio = (gated_changed_tokens / max(pred_changed_tokens, 1))
 
         return {
             "raw_tok": raw_tok,
@@ -150,7 +160,10 @@ def train_loop(
             "final_tok": gated_tok if eval_apply_gate else pred_tok,
             "final_seq": gated_seq if eval_apply_gate else pred_seq,
             "feas": feas,
-            "changed": change_ratio,
+            "pred_changed": pred_change_ratio,
+            "gated_changed": gated_change_ratio,
+            "changed": final_change_ratio,
+            "gate_keep": gate_keep_ratio,
         }
 
 
@@ -248,14 +261,14 @@ def train_loop(
         if valid_samples:
             em = run_eval(valid_samples)
         else:
-            em = {"raw_tok":0.0,"pred_tok":0.0,"pred_seq":0.0,"gated_tok":0.0,"gated_seq":0.0,"final_tok":0.0,"final_seq":0.0,"feas":0.0,"changed":0.0}
+            em = {"raw_tok":0.0,"pred_tok":0.0,"pred_seq":0.0,"gated_tok":0.0,"gated_seq":0.0,"final_tok":0.0,"final_seq":0.0,"feas":0.0,"pred_changed":0.0,"gated_changed":0.0,"changed":0.0,"gate_keep":0.0}
 
         print(
             f"[epoch {ep:02d}] tf_ratio={teacher_forcing_ratio(ep):.3f} traj_graph={str(traj_graph_source).lower()} "
             f"conf_gate={min_correction_confidence:.2f} gain_gate={min_correction_logit_gain:.2f} "
             f"eval_gate={int(eval_apply_gate)} crf_loss={crf_train_loss} crf_decode={int(use_crf_decode)} loss={train_loss:.4f} "
             f"raw_tok={em['raw_tok']:.3f} pred_tok={em['pred_tok']:.3f} gated_tok={em['gated_tok']:.3f} "
-            f"final_tok={em['final_tok']:.3f} final_seq={em['final_seq']:.3f} changed={em['changed']:.3f} feas@k={em['feas']:.3f}"
+            f"final_tok={em['final_tok']:.3f} final_seq={em['final_seq']:.3f} pred_changed={em['pred_changed']:.3f} gated_changed={em['gated_changed']:.3f} changed={em['changed']:.3f} gate_keep={em['gate_keep']:.3f} feas@k={em['feas']:.3f}"
         )
 
         score = em["final_tok"] + 0.1 * em["feas"]

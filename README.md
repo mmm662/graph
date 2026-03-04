@@ -85,7 +85,10 @@ python scripts/train.py --config configs/mall_train.yaml --mat_paths data/mall/f
 - `pred_tok`：模型解码后（未 gate）的 token accuracy
 - `gated_tok`：应用纠错 gate 后的 token accuracy
 - `final_tok/final_seq`：用于模型选择与保存的最终指标
-- `changed`：相对原输入被改动的 token 比例
+- `pred_changed`：未 gate 解码相对原输入的改动率
+- `gated_changed`：gate 后相对原输入的改动率
+- `changed`：当前最终输出（由 `eval_apply_gate` 决定）的改动率
+- `gate_keep`：gate 保留下来的改动比例（`gated_changed / pred_changed`）
 - `feas@k`：路径可达性指标
 
 ### 4.2 为什么有时会看到 `raw_tok` 一直稳定
@@ -112,7 +115,8 @@ python scripts/test.py --config configs/mall_train.yaml --disable_gate
 - `ungated_tok/ungated_seq`（不经过 gate 的模型解码）
 - `gated_tok/gated_seq`（经过 gate 后的结果）
 - `tok/seq`（本次运行最终采用的结果；`--disable_gate` 时等于 ungated）
-- `changed`（改动率）
+- `ungated_changed/gated_changed/changed`（未 gate、gate 后、最终改动率）
+- `gate_keep`（门控保留比例）
 - `conf_gate/gain_gate`（门控阈值）
 
 ---
@@ -158,6 +162,7 @@ python scripts/test.py --config configs/mall_train.yaml --disable_gate
 - 将 `train.eval_apply_gate` 设为 `false` 观察未 gate 学习能力
 - 降低 `min_correction_confidence` 或 `min_correction_logit_gain`
 - 尝试 `traj_graph_source: mixed` 与 `true` 对比
+- 若 `raw_tok` 与 `gated_tok` 长期相同，先看 `gate_keep`：接近 0 说明 gate 几乎把改动全回退；可继续下调门限。
 
 ### 7.2 CRF 权重加载报错（缺少 `crf.W`）
 说明 checkpoint 与当前 `use_crf` 配置不一致：
