@@ -85,7 +85,10 @@ python scripts/train.py --config configs/mall_train.yaml --mat_paths data/mall/f
 - `pred_tok`：模型解码后（未 gate）的 token accuracy
 - `gated_tok`：应用纠错 gate 后的 token accuracy
 - `final_tok/final_seq`：用于模型选择与保存的最终指标
-- `changed`：相对原输入被改动的 token 比例
+- `pred_changed`：未 gate 解码相对原输入的改动率
+- `gated_changed`：gate 后相对原输入的改动率
+- `changed`：当前最终输出（由 `eval_apply_gate` 决定）的改动率
+- `gate_keep`：gate 保留下来的改动比例（`gated_changed / pred_changed`）
 - `feas@k`：路径可达性指标
 
 ### 4.2 为什么有时会看到 `raw_tok` 一直稳定
@@ -104,12 +107,16 @@ python scripts/test.py --config configs/mall_train.yaml
 python scripts/test.py --config configs/mall_train.yaml --test_dir data/traj/valid
 python scripts/test.py --config configs/mall_train.yaml --ckpt runs/<run_name>/checkpoint.pt
 python scripts/test.py --config configs/mall_train.yaml --max_print 10
+python scripts/test.py --config configs/mall_train.yaml --disable_gate
 ```
 
 测试输出会同时给出：
 - `raw_tok/raw_seq`（原输入基线）
-- `tok/seq`（最终纠错后）
-- `changed`（改动率）
+- `ungated_tok/ungated_seq`（不经过 gate 的模型解码）
+- `gated_tok/gated_seq`（经过 gate 后的结果）
+- `tok/seq`（本次运行最终采用的结果；`--disable_gate` 时等于 ungated）
+- `ungated_changed/gated_changed/changed`（未 gate、gate 后、最终改动率）
+- `gate_keep`（门控保留比例）
 - `conf_gate/gain_gate`（门控阈值）
 
 ---
@@ -122,8 +129,10 @@ python scripts/test.py --config configs/mall_train.yaml --max_print 10
 - `model.min_correction_confidence`：置信度阈值
 - `model.min_correction_logit_gain`：logit 增益阈值
 - `model.apply_input_anchor_bias_inference`：是否在推理时给原输入 token 加偏置（建议默认 `false`，防止复制输入塌缩）
+- `model.apply_input_anchor_bias_training`：是否在训练 CE 分支给原输入 token 加偏置（建议 `true`，用于稳定“少改动纠错”任务）
 - `train.eval_apply_gate`：训练期验证时是否使用 gate 后结果作为最终评分
 - `train.crf_train_loss`：CRF 开启时训练损失类型，`ce`（推荐，稳定）或 `crf`（结构化 NLL）
+> 重要：仅当 `crf_train_loss: crf` 时才会启用 CRF pairwise 解码；若为 `ce`，评估/测试将自动回退为 argmax 解码（避免未训练的 `crf.W` 破坏结果）。
 
 > 说明：`input_anchor_bias` 仅在推理分支生效，不参与 teacher-forcing 训练 loss；若出现 `changed≈0` 的复制现象，优先关闭 `apply_input_anchor_bias_inference` 并将 `input_anchor_bias` 设为 0。
 
@@ -153,6 +162,7 @@ python scripts/test.py --config configs/mall_train.yaml --max_print 10
 - 将 `train.eval_apply_gate` 设为 `false` 观察未 gate 学习能力
 - 降低 `min_correction_confidence` 或 `min_correction_logit_gain`
 - 尝试 `traj_graph_source: mixed` 与 `true` 对比
+- 若 `raw_tok` 与 `gated_tok` 长期相同，先看 `gate_keep`：接近 0 说明 gate 几乎把改动全回退；可继续下调门限。
 
 ### 7.2 CRF 权重加载报错（缺少 `crf.W`）
 说明 checkpoint 与当前 `use_crf` 配置不一致：
