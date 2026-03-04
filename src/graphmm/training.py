@@ -46,6 +46,7 @@ def train_loop(
 
     road_adj_list = build_adj_list(graph_batch.num_nodes, edge_index)
     allowed_prev = k_hop_neighbors(road_adj_list, k=k_hop) if use_crf else None
+    use_crf_decode = bool(use_crf and crf_train_loss == "crf")
 
     def build_traj_graph_from_samples(samples: List[Sample]) -> Tuple[torch.Tensor, torch.Tensor]:
         source = str(traj_graph_source).lower()
@@ -100,43 +101,15 @@ def train_loop(
                     traj_edge_weight=traj_edge_weight,
                     teacher_forcing=None
                 )
-                if use_crf:
+                if use_crf_decode:
                     out=[]
                     for bi in range(len(batch)):
                         L = int(lengths[bi].item())
                         unary_i = unary_logits[bi,:L,:]
                         path = model.crf.viterbi_one(unary_i, H_R, allowed_prev, top_r=top_r_decode)
-                        path = confidence_gate_sequence(
-                            raw_seq=pred_seqs[bi],
-                            corrected_seq=path,
-                            unary_logits=unary_i,
-                            min_confidence=min_correction_confidence,
-                            min_logit_gain=min_correction_logit_gain,
-                        )
                         out.append(path)
                 else:
                     out = decode_argmax(unary_logits, lengths)
-                    out = [
-                        confidence_gate_sequence(
-                            raw_seq=pred_seqs[bi],
-                            corrected_seq=out[bi],
-                            unary_logits=unary_logits[bi, :int(lengths[bi].item()), :],
-                            min_confidence=min_correction_confidence,
-                            min_logit_gain=min_correction_logit_gain,
-                        )
-                        for bi in range(len(out))
-                    ]
-
-                out_gated = [
-                    confidence_gate_sequence(
-                        raw_seq=pred_seqs[bi],
-                        corrected_seq=out[bi],
-                        unary_logits=unary_logits[bi, :int(lengths[bi].item()), :],
-                        min_confidence=min_correction_confidence,
-                        min_logit_gain=min_correction_logit_gain,
-                    )
-                    for bi in range(len(out))
-                ]
 
                 out_gated = [
                     confidence_gate_sequence(
@@ -181,6 +154,23 @@ def train_loop(
         }
 
 
+    def sample_model_tokens(pred_pad: torch.Tensor, lengths: torch.Tensor, traj_edge_index: torch.Tensor, traj_edge_weight: torch.Tensor) -> torch.Tensor:
+        """Generate decoder tokens from current model for scheduled sampling."""
+        with torch.no_grad():
+            logits_ss, _ = model.forward_unary(
+                pred_pad, lengths,
+                node_num_feat=node_num_feat,
+                floor_id=floor_id,
+                edge_index=edge_index,
+                edge_attr=edge_attr,
+                traj_edge_index=traj_edge_index,
+                traj_edge_weight=traj_edge_weight,
+                teacher_forcing=None
+            )
+            ss_tokens = torch.argmax(logits_ss, dim=-1)
+            ss_tokens = ss_tokens.masked_fill(pred_pad == PADDING_ID, PADDING_ID)
+        return ss_tokens
+
     def teacher_forcing_ratio(epoch_idx: int) -> float:
         if epochs <= 1:
             return float(ss_end)
@@ -194,6 +184,8 @@ def train_loop(
         return float(max(0.0, min(1.0, ratio)))
 
     best = -1.0
+    if use_crf and crf_train_loss != "crf":
+        print("[warn] use_crf=true but crf_train_loss!='crf': decode will use argmax (CRF pairwise not trained).")
     for ep in range(1, epochs+1):
         model.train()
         random.shuffle(train_samples)
@@ -213,11 +205,13 @@ def train_loop(
             tf_ratio = teacher_forcing_ratio(ep)
             if tf_ratio >= 1.0:
                 tf_in = true_pad
-            elif tf_ratio <= 0.0:
-                tf_in = pred_pad
             else:
-                tf_mask = (torch.rand_like(true_pad, dtype=torch.float32) < tf_ratio) & (true_pad != PADDING_ID)
-                tf_in = torch.where(tf_mask, true_pad, pred_pad)
+                sampled_tf = sample_model_tokens(pred_pad, lengths, traj_edge_index, traj_edge_weight)
+                if tf_ratio <= 0.0:
+                    tf_in = sampled_tf
+                else:
+                    tf_mask = (torch.rand_like(true_pad, dtype=torch.float32) < tf_ratio) & (true_pad != PADDING_ID)
+                    tf_in = torch.where(tf_mask, true_pad, sampled_tf)
 
             unary_logits, H_R = model.forward_unary(
                 pred_pad, lengths,
@@ -259,7 +253,7 @@ def train_loop(
         print(
             f"[epoch {ep:02d}] tf_ratio={teacher_forcing_ratio(ep):.3f} traj_graph={str(traj_graph_source).lower()} "
             f"conf_gate={min_correction_confidence:.2f} gain_gate={min_correction_logit_gain:.2f} "
-            f"eval_gate={int(eval_apply_gate)} crf_loss={crf_train_loss} loss={train_loss:.4f} "
+            f"eval_gate={int(eval_apply_gate)} crf_loss={crf_train_loss} crf_decode={int(use_crf_decode)} loss={train_loss:.4f} "
             f"raw_tok={em['raw_tok']:.3f} pred_tok={em['pred_tok']:.3f} gated_tok={em['gated_tok']:.3f} "
             f"final_tok={em['final_tok']:.3f} final_seq={em['final_seq']:.3f} changed={em['changed']:.3f} feas@k={em['feas']:.3f}"
         )

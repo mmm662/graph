@@ -104,11 +104,14 @@ python scripts/test.py --config configs/mall_train.yaml
 python scripts/test.py --config configs/mall_train.yaml --test_dir data/traj/valid
 python scripts/test.py --config configs/mall_train.yaml --ckpt runs/<run_name>/checkpoint.pt
 python scripts/test.py --config configs/mall_train.yaml --max_print 10
+python scripts/test.py --config configs/mall_train.yaml --disable_gate
 ```
 
 测试输出会同时给出：
 - `raw_tok/raw_seq`（原输入基线）
-- `tok/seq`（最终纠错后）
+- `ungated_tok/ungated_seq`（不经过 gate 的模型解码）
+- `gated_tok/gated_seq`（经过 gate 后的结果）
+- `tok/seq`（本次运行最终采用的结果；`--disable_gate` 时等于 ungated）
 - `changed`（改动率）
 - `conf_gate/gain_gate`（门控阈值）
 
@@ -122,8 +125,10 @@ python scripts/test.py --config configs/mall_train.yaml --max_print 10
 - `model.min_correction_confidence`：置信度阈值
 - `model.min_correction_logit_gain`：logit 增益阈值
 - `model.apply_input_anchor_bias_inference`：是否在推理时给原输入 token 加偏置（建议默认 `false`，防止复制输入塌缩）
+- `model.apply_input_anchor_bias_training`：是否在训练 CE 分支给原输入 token 加偏置（建议 `true`，用于稳定“少改动纠错”任务）
 - `train.eval_apply_gate`：训练期验证时是否使用 gate 后结果作为最终评分
 - `train.crf_train_loss`：CRF 开启时训练损失类型，`ce`（推荐，稳定）或 `crf`（结构化 NLL）
+> 重要：仅当 `crf_train_loss: crf` 时才会启用 CRF pairwise 解码；若为 `ce`，评估/测试将自动回退为 argmax 解码（避免未训练的 `crf.W` 破坏结果）。
 
 > 说明：`input_anchor_bias` 仅在推理分支生效，不参与 teacher-forcing 训练 loss；若出现 `changed≈0` 的复制现象，优先关闭 `apply_input_anchor_bias_inference` 并将 `input_anchor_bias` 设为 0。
 
