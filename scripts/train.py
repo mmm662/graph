@@ -117,6 +117,8 @@ def main():
         unreachable_penalty=cfg["model"]["unreachable_penalty"],
         input_anchor_bias=cfg["model"].get("input_anchor_bias", 0.0),
         apply_input_anchor_bias_inference=cfg["model"].get("apply_input_anchor_bias_inference", False),
+        apply_input_anchor_bias_training=cfg["model"].get("apply_input_anchor_bias_training", True),
+        inference_use_input_context=cfg["model"].get("inference_use_input_context", True),
     )
 
     run_dir = ROOT / "runs" / cfg["output"]["run_name"]
@@ -142,6 +144,7 @@ def main():
         min_correction_logit_gain=cfg["model"].get("min_correction_logit_gain", 0.0),
         eval_apply_gate=cfg["train"].get("eval_apply_gate", False),
         crf_train_loss=cfg["train"].get("crf_train_loss", "ce"),
+        error_token_weight=cfg["train"].get("error_token_weight", 4.0),
     )
 
 if __name__ == "__main__":

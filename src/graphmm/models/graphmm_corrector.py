@@ -27,6 +27,8 @@ class GraphMMCorrector(nn.Module):
         unreachable_penalty: float = -1e4,
         input_anchor_bias: float = 0.0,
         apply_input_anchor_bias_inference: bool = False,
+        apply_input_anchor_bias_training: bool = True,
+        inference_use_input_context: bool = True,
     ):
         super().__init__()
         self.num_nodes = num_nodes
@@ -35,6 +37,8 @@ class GraphMMCorrector(nn.Module):
         self.use_crf = use_crf
         self.input_anchor_bias = float(input_anchor_bias)
         self.apply_input_anchor_bias_inference = bool(apply_input_anchor_bias_inference)
+        self.apply_input_anchor_bias_training = bool(apply_input_anchor_bias_training)
+        self.inference_use_input_context = bool(inference_use_input_context)
 
         self.node_encoder = NodeFeatureEncoder(num_floors, node_num_dim, floor_emb_dim, road_dim)
 
@@ -120,11 +124,33 @@ class GraphMMCorrector(nn.Module):
         dec_h = enc_mean.unsqueeze(0)
 
         zero = torch.zeros(B, self.road_dim, device=device)
+        start_emb = H_R[pred_safe[:, 0]] if L > 0 else zero
+
+        if teacher_forcing is None and self.inference_use_input_context:
+            # Inference with observed-input context (non-autoregressive over model predictions).
+            tf_infer = pred_safe
+            dec_inputs = []
+            prev_emb = start_emb
+            for t in range(L):
+                dec_inputs.append(prev_emb.unsqueeze(1))
+                prev_emb = H_R[tf_infer[:, t]]
+            dec_inp = torch.cat(dec_inputs, dim=1)
+            dec_out, _ = self.decoder(dec_inp, dec_h)
+
+            ctx = []
+            for t in range(L):
+                ctx.append(self.attn(dec_out[:, t, :], enc_out, enc_out, mask=mask).unsqueeze(1))
+            ctx_all = torch.cat(ctx, dim=1)
+
+            Z = F.normalize(self.dec_out(torch.cat([dec_out, ctx_all], dim=-1)), p=2, dim=-1)
+            logits = self.hidden_similarity(Z, H_R)
+            if self.apply_input_anchor_bias_inference:
+                logits = self._apply_input_anchor_bias(logits, pred_safe, mask)
+            return logits, H_R
 
         if teacher_forcing is None:
-            # Autoregressive decoding for inference: feed previous predicted node embedding.
-            # This avoids constant decoder inputs (all zeros) that collapse outputs.
-            prev_emb = zero
+            # Fully autoregressive inference fallback.
+            prev_emb = start_emb
             logits_steps = []
             for _ in range(L):
                 dec_step, dec_h = self.decoder(prev_emb.unsqueeze(1), dec_h)
@@ -146,7 +172,7 @@ class GraphMMCorrector(nn.Module):
         tf[tf == PADDING_ID] = 0
 
         dec_inputs = []
-        prev_emb = zero
+        prev_emb = start_emb
         for t in range(L):
             dec_inputs.append(prev_emb.unsqueeze(1))
             prev_emb = H_R[tf[:, t]]
@@ -160,6 +186,8 @@ class GraphMMCorrector(nn.Module):
 
         Z = F.normalize(self.dec_out(torch.cat([dec_out, ctx_all], dim=-1)), p=2, dim=-1)
         logits = self.hidden_similarity(Z, H_R)
+        if self.apply_input_anchor_bias_training:
+            logits = self._apply_input_anchor_bias(logits, pred_safe, mask)
         return logits, H_R
 
 @torch.no_grad()
