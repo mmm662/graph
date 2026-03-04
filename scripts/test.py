@@ -144,6 +144,7 @@ def main():
         unreachable_penalty=cfg["model"]["unreachable_penalty"],
         input_anchor_bias=cfg["model"].get("input_anchor_bias", 0.0),
         apply_input_anchor_bias_inference=cfg["model"].get("apply_input_anchor_bias_inference", False),
+        apply_input_anchor_bias_training=cfg["model"].get("apply_input_anchor_bias_training", True),
     ).to(device)
 
     state = torch.load(ckpt, map_location=device)

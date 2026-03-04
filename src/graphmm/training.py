@@ -154,6 +154,23 @@ def train_loop(
         }
 
 
+    def sample_model_tokens(pred_pad: torch.Tensor, lengths: torch.Tensor, traj_edge_index: torch.Tensor, traj_edge_weight: torch.Tensor) -> torch.Tensor:
+        """Generate decoder tokens from current model for scheduled sampling."""
+        with torch.no_grad():
+            logits_ss, _ = model.forward_unary(
+                pred_pad, lengths,
+                node_num_feat=node_num_feat,
+                floor_id=floor_id,
+                edge_index=edge_index,
+                edge_attr=edge_attr,
+                traj_edge_index=traj_edge_index,
+                traj_edge_weight=traj_edge_weight,
+                teacher_forcing=None
+            )
+            ss_tokens = torch.argmax(logits_ss, dim=-1)
+            ss_tokens = ss_tokens.masked_fill(pred_pad == PADDING_ID, PADDING_ID)
+        return ss_tokens
+
     def teacher_forcing_ratio(epoch_idx: int) -> float:
         if epochs <= 1:
             return float(ss_end)
@@ -188,11 +205,13 @@ def train_loop(
             tf_ratio = teacher_forcing_ratio(ep)
             if tf_ratio >= 1.0:
                 tf_in = true_pad
-            elif tf_ratio <= 0.0:
-                tf_in = pred_pad
             else:
-                tf_mask = (torch.rand_like(true_pad, dtype=torch.float32) < tf_ratio) & (true_pad != PADDING_ID)
-                tf_in = torch.where(tf_mask, true_pad, pred_pad)
+                sampled_tf = sample_model_tokens(pred_pad, lengths, traj_edge_index, traj_edge_weight)
+                if tf_ratio <= 0.0:
+                    tf_in = sampled_tf
+                else:
+                    tf_mask = (torch.rand_like(true_pad, dtype=torch.float32) < tf_ratio) & (true_pad != PADDING_ID)
+                    tf_in = torch.where(tf_mask, true_pad, sampled_tf)
 
             unary_logits, H_R = model.forward_unary(
                 pred_pad, lengths,
