@@ -103,6 +103,8 @@ def main():
     traj_xy_mode = args.traj_xy_mode or cfg.get("data", {}).get("traj_xy_mode", "auto")
     min_correction_confidence = float(cfg.get("model", {}).get("min_correction_confidence", 0.0))
     min_correction_logit_gain = float(cfg.get("model", {}).get("min_correction_logit_gain", 0.0))
+    crf_train_loss = str(cfg.get("train", {}).get("crf_train_loss", "ce")).lower()
+    use_crf_decode = bool(cfg.get("model", {}).get("use_crf", False) and crf_train_loss == "crf")
 
     if ckpt is None:
         raise ValueError("ckpt_path is missing. Fill cfg.test.ckpt_path or pass --ckpt ...")
@@ -147,6 +149,9 @@ def main():
     state = torch.load(ckpt, map_location=device)
     model.load_state_dict(state["model"], strict=True)
     model.eval()
+
+    if cfg["model"]["use_crf"] and not use_crf_decode:
+        print("[warn] use_crf=true but crf_train_loss!='crf'; using argmax decode because CRF pairwise may be untrained.")
 
     # CRF allowed_prev
     road_adj_list = build_adj_list(gb.num_nodes, gb.edge_index)
@@ -210,7 +215,7 @@ def main():
             )
             unary = unary_logits[0, :L, :]
 
-            if cfg["model"]["use_crf"]:
+            if use_crf_decode:
                 corrected = model.crf.viterbi_one(
                     unary_logits=unary,
                     H=H_R,
@@ -281,7 +286,7 @@ def main():
     print(
         f"\n[TEST] n={len(final_preds)} raw_tok={raw_tok:.3f} ungated_tok={ungated_tok:.3f} gated_tok={gated_tok:.3f} "
         f"tok={tok:.3f} raw_seq={raw_seq:.3f} ungated_seq={ungated_seq:.3f} gated_seq={gated_seq:.3f} seq={seq:.3f} "
-        f"feas@k={feas:.3f} changed={change_ratio:.3f} gate_enabled={int(not args.disable_gate)} "
+        f"feas@k={feas:.3f} changed={change_ratio:.3f} gate_enabled={int(not args.disable_gate)} crf_decode={int(use_crf_decode)} "
         f"conf_gate={min_correction_confidence:.2f} gain_gate={min_correction_logit_gain:.2f}"
     )
 
