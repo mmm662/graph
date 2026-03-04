@@ -128,8 +128,9 @@ python scripts/test.py --config configs/mall_train.yaml --disable_gate
 - `train.top_r_train / train.top_r_decode`：CRF 候选搜索宽度
 - `model.min_correction_confidence`：置信度阈值
 - `model.min_correction_logit_gain`：logit 增益阈值
-- `model.apply_input_anchor_bias_inference`：是否在推理时给原输入 token 加偏置（建议默认 `false`，防止复制输入塌缩）
+- `model.apply_input_anchor_bias_inference`：是否在推理时给原输入 token 加偏置（建议默认 `true`，用于稳定近似复制+局部纠错任务）
 - `model.apply_input_anchor_bias_training`：是否在训练 CE 分支给原输入 token 加偏置（建议 `true`，用于稳定“少改动纠错”任务）
+- `model.inference_use_input_context`：推理时是否使用输入轨迹上下文解码（建议 `true`，可显著提升纠错稳定性）
 - `train.eval_apply_gate`：训练期验证时是否使用 gate 后结果作为最终评分
 - `train.crf_train_loss`：CRF 开启时训练损失类型，`ce`（推荐，稳定）或 `crf`（结构化 NLL）
 > 重要：仅当 `crf_train_loss: crf` 时才会启用 CRF pairwise 解码；若为 `ce`，评估/测试将自动回退为 argmax 解码（避免未训练的 `crf.W` 破坏结果）。
@@ -147,6 +148,7 @@ python scripts/test.py --config configs/mall_train.yaml --disable_gate
 ### 6.3 训练动态
 - `ss_start / ss_end / ss_mode`：scheduled sampling
 - `epochs / batch_size / lr`：训练预算
+- `error_token_weight`：对原始错误位置（`pred!=true`）的 CE 加权系数，提升“纠错位”学习强度
 
 ---
 

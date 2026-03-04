@@ -31,8 +31,9 @@ model:
   use_crf: true
   unreachable_penalty: -5000.0
   input_anchor_bias: 1.50
-  apply_input_anchor_bias_inference: false
+  apply_input_anchor_bias_inference: true
   apply_input_anchor_bias_training: true
+  inference_use_input_context: true
   min_correction_confidence: 0.00
   min_correction_logit_gain: 0.00
 train:
@@ -50,5 +51,6 @@ train:
   traj_graph_source: mixed
   eval_apply_gate: false
   crf_train_loss: ce
+  error_token_weight: 6.0
 output:
   run_name: mall_final_crf

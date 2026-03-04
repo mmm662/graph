@@ -30,6 +30,7 @@ def train_loop(
     min_correction_logit_gain: float = 0.0,
     eval_apply_gate: bool = False,
     crf_train_loss: str = "ce",
+    error_token_weight: float = 4.0,
 ):
     crf_train_loss = str(crf_train_loss).lower()
     if crf_train_loss not in {"ce", "crf"}:
@@ -247,7 +248,14 @@ def train_loop(
                 loss = loss / max(len(batch),1)
             else:
                 B, Lm, N = unary_logits.shape
-                loss = torch.nn.functional.cross_entropy(unary_logits.view(B*Lm, N), true_pad.view(B*Lm), ignore_index=PADDING_ID)
+                flat_logits = unary_logits.view(B * Lm, N)
+                flat_target = true_pad.view(B * Lm)
+                per_tok_loss = torch.nn.functional.cross_entropy(flat_logits, flat_target, ignore_index=PADDING_ID, reduction="none")
+
+                valid_mask = (flat_target != PADDING_ID).float()
+                err_mask = ((pred_pad.view(B * Lm) != flat_target) & (flat_target != PADDING_ID)).float()
+                weights = valid_mask + err_mask * max(float(error_token_weight) - 1.0, 0.0)
+                loss = (per_tok_loss * weights).sum() / weights.sum().clamp(min=1.0)
 
             opt.zero_grad()
             loss.backward()
@@ -266,7 +274,7 @@ def train_loop(
         print(
             f"[epoch {ep:02d}] tf_ratio={teacher_forcing_ratio(ep):.3f} traj_graph={str(traj_graph_source).lower()} "
             f"conf_gate={min_correction_confidence:.2f} gain_gate={min_correction_logit_gain:.2f} "
-            f"eval_gate={int(eval_apply_gate)} crf_loss={crf_train_loss} crf_decode={int(use_crf_decode)} loss={train_loss:.4f} "
+            f"eval_gate={int(eval_apply_gate)} crf_loss={crf_train_loss} crf_decode={int(use_crf_decode)} err_w={float(error_token_weight):.1f} loss={train_loss:.4f} "
             f"raw_tok={em['raw_tok']:.3f} pred_tok={em['pred_tok']:.3f} gated_tok={em['gated_tok']:.3f} "
             f"final_tok={em['final_tok']:.3f} final_seq={em['final_seq']:.3f} pred_changed={em['pred_changed']:.3f} gated_changed={em['gated_changed']:.3f} changed={em['changed']:.3f} gate_keep={em['gate_keep']:.3f} feas@k={em['feas']:.3f}"
         )
