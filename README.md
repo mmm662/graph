@@ -104,11 +104,14 @@ python scripts/test.py --config configs/mall_train.yaml
 python scripts/test.py --config configs/mall_train.yaml --test_dir data/traj/valid
 python scripts/test.py --config configs/mall_train.yaml --ckpt runs/<run_name>/checkpoint.pt
 python scripts/test.py --config configs/mall_train.yaml --max_print 10
+python scripts/test.py --config configs/mall_train.yaml --disable_gate
 ```
 
 测试输出会同时给出：
 - `raw_tok/raw_seq`（原输入基线）
-- `tok/seq`（最终纠错后）
+- `ungated_tok/ungated_seq`（不经过 gate 的模型解码）
+- `gated_tok/gated_seq`（经过 gate 后的结果）
+- `tok/seq`（本次运行最终采用的结果；`--disable_gate` 时等于 ungated）
 - `changed`（改动率）
 - `conf_gate/gain_gate`（门控阈值）
 
