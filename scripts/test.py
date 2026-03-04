@@ -78,6 +78,7 @@ def main():
     ap.add_argument("--device", default="auto")
     ap.add_argument("--traj_xy_mode", default=None, choices=["xy", "yx", "auto"], help="trajectory coordinate order mapping")
     ap.add_argument("--max_print", type=int, default=30, help="max points to print per sequence")
+    ap.add_argument("--disable_gate", action="store_true", help="disable confidence gate and report raw decoder output only")
     args = ap.parse_args()
 
     with open(args.config, "r", encoding="utf-8") as f:
@@ -161,7 +162,7 @@ def main():
             f"Make sure you have both *_neg_*.mat and matching *_gt_*.mat."
         )
 
-    raw_preds, preds, golds = [], [], []
+    raw_preds, preds_ungated, preds_gated, golds = [], [], [], []
 
     with torch.no_grad():
         for neg_path, gt_path in pairs:
@@ -219,16 +220,18 @@ def main():
             else:
                 corrected = decode_argmax(unary_logits, lengths)[0]
 
-            corrected = confidence_gate_sequence(
+            corrected_gated = confidence_gate_sequence(
                 raw_seq=pred_seq,
                 corrected_seq=corrected,
                 unary_logits=unary,
                 min_confidence=min_correction_confidence,
                 min_logit_gain=min_correction_logit_gain,
             )
+            final_corrected = corrected if args.disable_gate else corrected_gated
 
             raw_preds.append(pred_seq)
-            preds.append(corrected)
+            preds_ungated.append(corrected)
+            preds_gated.append(corrected_gated)
             golds.append(true_seq)
 
             # ---- print this sample ----
@@ -236,13 +239,13 @@ def main():
             print("\n==============================")
             print("NEG file:", os.path.basename(neg_path))
             print("GT  file:", os.path.basename(gt_path))
-            print(f"len(pred_ids)={len(pred_seq)} len(corr_ids)={len(corrected)} len(gt_ids)={len(true_seq)}")
+            print(f"len(pred_ids)={len(pred_seq)} len(corr_ids)={len(final_corrected)} len(gt_ids)={len(true_seq)}")
 
             print("\n[pred_ids]")
             print(pred_seq[:maxp], "..." if len(pred_seq) > maxp else "")
 
             print("\n[corrected_ids]")
-            print(corrected[:maxp], "..." if len(corrected) > maxp else "")
+            print(final_corrected[:maxp], "..." if len(final_corrected) > maxp else "")
 
             print("\n[gt_ids]")
             print(true_seq[:maxp], "..." if len(true_seq) > maxp else "")
@@ -254,24 +257,33 @@ def main():
             print(ids_to_xyzf(pred_seq[:maxp], gb, floor_base_out=floor_base_out))
 
             print("\n[corrected (id,x,y,f)]")
-            print(ids_to_xyzf(corrected[:maxp], gb, floor_base_out=floor_base_out))
+            print(ids_to_xyzf(final_corrected[:maxp], gb, floor_base_out=floor_base_out))
 
             print("\n[gt (id,x,y,f)]")
             print(ids_to_xyzf(true_seq[:maxp], gb, floor_base_out=floor_base_out))
 
     raw_tok, raw_seq = token_seq_accuracy(raw_preds, golds)
-    tok, seq = token_seq_accuracy(preds, golds)
-    feas = path_feasibility_rate(preds, road_adj_list, k_hop=max(1, k_hop))
+    ungated_tok, ungated_seq = token_seq_accuracy(preds_ungated, golds)
+    gated_tok, gated_seq = token_seq_accuracy(preds_gated, golds)
+
+    final_preds = preds_ungated if args.disable_gate else preds_gated
+    tok, seq = token_seq_accuracy(final_preds, golds)
+    feas = path_feasibility_rate(final_preds, road_adj_list, k_hop=max(1, k_hop))
 
     total_tokens = 0
     changed_tokens = 0
-    for raw, corr in zip(raw_preds, preds):
+    for raw, corr in zip(raw_preds, final_preds):
         L = min(len(raw), len(corr))
         total_tokens += L
         changed_tokens += sum(int(a != b) for a, b in zip(raw[:L], corr[:L]))
     change_ratio = (changed_tokens / total_tokens) if total_tokens > 0 else 0.0
 
-    print(f"\n[TEST] n={len(preds)} raw_tok={raw_tok:.3f} tok={tok:.3f} raw_seq={raw_seq:.3f} seq={seq:.3f} feas@k={feas:.3f} changed={change_ratio:.3f} conf_gate={min_correction_confidence:.2f} gain_gate={min_correction_logit_gain:.2f}")
+    print(
+        f"\n[TEST] n={len(final_preds)} raw_tok={raw_tok:.3f} ungated_tok={ungated_tok:.3f} gated_tok={gated_tok:.3f} "
+        f"tok={tok:.3f} raw_seq={raw_seq:.3f} ungated_seq={ungated_seq:.3f} gated_seq={gated_seq:.3f} seq={seq:.3f} "
+        f"feas@k={feas:.3f} changed={change_ratio:.3f} gate_enabled={int(not args.disable_gate)} "
+        f"conf_gate={min_correction_confidence:.2f} gain_gate={min_correction_logit_gain:.2f}"
+    )
 
 
 if __name__ == "__main__":
