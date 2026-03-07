@@ -110,6 +110,28 @@ python scripts/test.py --config configs/mall_train.yaml --max_print 10
 python scripts/test.py --config configs/mall_train.yaml --disable_gate
 ```
 
+
+
+### 5.1 纠错诊断（逐时刻日志 + 核心排查指标）
+
+当你要定位“过度纠错 / 纠错失败 / CRF 与 gate 是否起反作用”时，可运行：
+
+```bash
+python scripts/diagnose_corrections.py --config configs/mall_train.yaml --ckpt runs/<run_name>/checkpoint.pt --test_dir data/traj/test
+```
+
+常用参数：
+- `--output_csv runs/diagnostics/token_diagnostics.csv`：输出逐 token 诊断表
+- `--disable_gate`：仅看解码上限（不经过 gate）
+- `--force_argmax_decode`：禁用 CRF，仅看 unary argmax
+- `--max_hops`：拓扑距离上限
+
+脚本会输出：
+- `R_keep / R_fix / R_over`
+- `R_reject_correct / R_block_wrong`（gate 是否过保守）
+- `illegal_rate_raw/argmax/decode/final`（拓扑非法转移率）
+- 逐时刻 CSV 字段（`x_t, y_gt, y_argmax, y_decode, y_final, u_gt, u_x, gain_gtx, conf, topo_dist_* ...`）
+
 测试输出会同时给出：
 - `raw_tok/raw_seq`（原输入基线）
 - `ungated_tok/ungated_seq`（不经过 gate 的模型解码）
