@@ -1,11 +1,12 @@
 import argparse
 import csv
+import pickle
 import glob
 import os
 import sys
 from collections import deque
 from pathlib import Path
-from typing import Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
 import torch
 import yaml
@@ -28,6 +29,55 @@ def _ensure_str(x, name: str) -> str:
         return str(x[0])
     return str(x)
 
+
+
+
+def _load_model_state_dict(ckpt_path: str, device: str) -> Mapping[str, Any]:
+    ckpt_file = Path(ckpt_path)
+    if not ckpt_file.exists():
+        raise FileNotFoundError(
+            f"checkpoint not found: {ckpt_file}. Please pass a valid .pt/.pth file via --ckpt "
+            f"or cfg.test.ckpt_path."
+        )
+    if ckpt_file.is_dir():
+        raise IsADirectoryError(f"checkpoint path is a directory, expected file: {ckpt_file}")
+
+    try:
+        state = torch.load(str(ckpt_file), map_location=device)
+    except (RuntimeError, pickle.UnpicklingError) as exc:
+        msg = str(exc).lower()
+        if "weights only load failed" in msg:
+            try:
+                state = torch.load(str(ckpt_file), map_location=device, weights_only=False)
+            except Exception as exc2:
+                raise RuntimeError(
+                    "Failed to load checkpoint with both weights_only=True/False. "
+                    "The file may be corrupted or not a checkpoint.\n"
+                    f"  path: {ckpt_file}"
+                ) from exc2
+        elif "pytorchstreamreader failed reading zip archive" in msg:
+            raise RuntimeError(
+                "Failed to load checkpoint: file is not a valid PyTorch checkpoint archive, "
+                "or is corrupted.\n"
+                f"  path: {ckpt_file}\n"
+                "Please verify you selected a model checkpoint file (e.g. runs/<run_name>/checkpoint.pt), "
+                "not another asset such as .mat/.zip/.yaml."
+            ) from exc
+        else:
+            raise
+
+    if isinstance(state, Mapping):
+        if "model" in state and isinstance(state["model"], Mapping):
+            return state["model"]
+        # allow raw state_dict checkpoints
+        sample_keys = list(state.keys())
+        if sample_keys and all(isinstance(k, str) for k in sample_keys):
+            if any(k.startswith(("node_encoder.", "gine.", "encoder.", "decoder.", "crf.")) for k in sample_keys):
+                return state
+
+    raise ValueError(
+        f"Unsupported checkpoint format at {ckpt_file}. Expected a dict with key 'model' or a raw model state_dict."
+    )
 
 def pair_neg_gt(files: Iterable[str]) -> List[Tuple[str, str]]:
     negs = [p for p in files if ("_neg_" in os.path.basename(p) or "neg" in os.path.basename(p))]
@@ -219,8 +269,8 @@ def main() -> None:
         inference_use_input_context=cfg["model"].get("inference_use_input_context", True),
     ).to(device)
 
-    state = torch.load(ckpt, map_location=device)
-    model.load_state_dict(state["model"], strict=True)
+    model_state = _load_model_state_dict(ckpt, device=device)
+    model.load_state_dict(model_state, strict=True)
     model.eval()
 
     road_adj = build_adj_list(gb.num_nodes, gb.edge_index)
