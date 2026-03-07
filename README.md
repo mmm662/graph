@@ -117,7 +117,10 @@ python scripts/test.py --config configs/mall_train.yaml --disable_gate
 当你要定位“过度纠错 / 纠错失败 / CRF 与 gate 是否起反作用”时，可运行：
 
 ```bash
-python scripts/diagnose_corrections.py --config configs/mall_train.yaml --ckpt runs/<run_name>/checkpoint.pt --test_dir data/traj/test
+python scripts/diagnose_corrections.py --config configs/mall_train.yaml --ckpt runs/mall_final/checkpoint.pt --test_dir data/traj/test
+
+python scripts/diagnose_corrections.py --config configs/mall_train.yaml --ckpt runs/mall_final_crf/checkpoint.pt --test_dir data/traj/test
+
 ```
 
 常用参数：
