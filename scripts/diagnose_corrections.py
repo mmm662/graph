@@ -32,6 +32,24 @@ def _ensure_str(x, name: str) -> str:
 
 
 
+def _peek_file_prefix(path: Path, n: int = 256) -> bytes:
+    with path.open("rb") as f:
+        return f.read(n)
+
+
+def _raise_if_lfs_pointer(path: Path) -> None:
+    try:
+        head = _peek_file_prefix(path, n=256)
+    except OSError:
+        return
+    if b"git-lfs.github.com/spec/v1" in head:
+        raise RuntimeError(
+            "Checkpoint file appears to be a Git LFS pointer, not the real model weights.\n"
+            f"  path: {path}\n"
+            "Please install Git LFS and run: `git lfs pull` (or re-download the actual checkpoint file)."
+        )
+
+
 def _load_model_state_dict(ckpt_path: str, device: str) -> Mapping[str, Any]:
     ckpt_file = Path(ckpt_path)
     if not ckpt_file.exists():
@@ -41,6 +59,8 @@ def _load_model_state_dict(ckpt_path: str, device: str) -> Mapping[str, Any]:
         )
     if ckpt_file.is_dir():
         raise IsADirectoryError(f"checkpoint path is a directory, expected file: {ckpt_file}")
+
+    _raise_if_lfs_pointer(ckpt_file)
 
     try:
         state = torch.load(str(ckpt_file), map_location=device)
@@ -56,19 +76,27 @@ def _load_model_state_dict(ckpt_path: str, device: str) -> Mapping[str, Any]:
                     f"  path: {ckpt_file}"
                 ) from exc2
         elif "pytorchstreamreader failed reading zip archive" in msg:
-            raise RuntimeError(
-                "Failed to load checkpoint: file is not a valid PyTorch checkpoint archive, "
-                "or is corrupted.\n"
-                f"  path: {ckpt_file}\n"
-                "Please verify you selected a model checkpoint file (e.g. runs/<run_name>/checkpoint.pt), "
-                "not another asset such as .mat/.zip/.yaml."
-            ) from exc
+            # TorchScript checkpoints may fail torch.load; try torch.jit.load as fallback.
+            try:
+                script_mod = torch.jit.load(str(ckpt_file), map_location=device)
+                state = script_mod.state_dict()
+            except Exception:
+                _raise_if_lfs_pointer(ckpt_file)
+                raise RuntimeError(
+                    "Failed to load checkpoint: file is not a valid PyTorch checkpoint archive, "
+                    "or is corrupted.\n"
+                    f"  path: {ckpt_file}\n"
+                    "If this file came from Git, ensure it is not an LFS pointer (`git lfs pull`). "
+                    "Otherwise re-export/re-download the checkpoint file."
+                ) from exc
         else:
             raise
 
     if isinstance(state, Mapping):
         if "model" in state and isinstance(state["model"], Mapping):
             return state["model"]
+        if "state_dict" in state and isinstance(state["state_dict"], Mapping):
+            return state["state_dict"]
         # allow raw state_dict checkpoints
         sample_keys = list(state.keys())
         if sample_keys and all(isinstance(k, str) for k in sample_keys):
