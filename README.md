@@ -130,7 +130,7 @@ python scripts/diagnose_corrections.py --config configs/mall_train.yaml --ckpt r
 - `R_keep / R_fix / R_over`
 - `R_reject_correct / R_block_wrong`（gate 是否过保守）
 - `illegal_rate_raw/argmax/decode/final`（拓扑非法转移率）
-- 逐时刻 CSV 字段（`x_t, y_gt, y_argmax, y_decode, y_final, u_gt, u_x, gain_gtx, conf, topo_dist_* ...`）
+- 逐时刻 CSV 字段（`x_t, y_gt, y_argmax, y_decode, y_final, u_gt, u_x, gain_gtx, conf, rank_gt, gt_in_top10, top1_margin, topo_dist_* ...`）
 
 测试输出会同时给出：
 - `raw_tok/raw_seq`（原输入基线）

@@ -219,6 +219,15 @@ def illegal_rate(seq: Sequence[int], allowed_prev: List[set]) -> float:
     return bad / max(1, len(seq) - 1)
 
 
+
+
+def _rank_of_id(logits_row: torch.Tensor, idx: int) -> int:
+    order = torch.argsort(logits_row, descending=True)
+    pos = (order == int(idx)).nonzero(as_tuple=False)
+    if pos.numel() == 0:
+        return -1
+    return int(pos[0].item()) + 1
+
 def summarize(rows: List[Dict], allowed_prev: List[set], print_prefix: str = "") -> None:
     n = len(rows)
     if n == 0:
@@ -257,6 +266,13 @@ def summarize(rows: List[Dict], allowed_prev: List[set], print_prefix: str = "")
     print(f"{print_prefix}[diag] R_reject_correct={reject_correct:.4f} R_block_wrong={block_wrong:.4f} crf_gain={crf_gain:.4f}")
     if delta_all:
         print(f"{print_prefix}[diag] gain_gtx mean(all)={sum(delta_all) / len(delta_all):.4f} mean(raw_wrong)={(sum(delta_err) / len(delta_err)) if delta_err else 0.0:.4f}")
+
+    wrong_rows = [r for r in rows if not r["is_correct_raw"]]
+    if wrong_rows:
+        hit5 = sum(int(r["gt_in_top5"]) for r in wrong_rows) / len(wrong_rows)
+        hit10 = sum(int(r["gt_in_top10"]) for r in wrong_rows) / len(wrong_rows)
+        avg_rank = sum(int(r["rank_gt"]) for r in wrong_rows if int(r["rank_gt"]) > 0) / max(1, sum(int(int(r["rank_gt"]) > 0) for r in wrong_rows))
+        print(f"{print_prefix}[diag] wrong_hit@5={hit5:.4f} wrong_hit@10={hit10:.4f} wrong_rank_gt(avg-valid)={avg_rank:.2f}")
 
     for name in ["raw", "argmax", "decode", "final"]:
         seqs = {}
@@ -419,6 +435,13 @@ def main() -> None:
                 topo_pred_gt = shortest_hop_distance(road_adj, y_decode, y_gt, args.max_hops)
                 near_junction = int(near_junction_mask[x_t])
 
+                logits_t = unary[t]
+                rank_gt = _rank_of_id(logits_t, y_gt)
+                rank_x = _rank_of_id(logits_t, x_t)
+                topk_idx = torch.topk(logits_t, k=min(10, int(logits_t.numel())), dim=-1).indices.tolist()
+                top1 = float(logits_t[topk_idx[0]]) if topk_idx else 0.0
+                top2 = float(logits_t[topk_idx[1]]) if len(topk_idx) > 1 else top1
+
                 row = {
                     "sample_id": sid,
                     "step": t,
@@ -436,6 +459,12 @@ def main() -> None:
                     "gain_gtx": float((unary[t, y_gt] - unary[t, x_t]).item()),
                     "gain_predx": float((unary[t, y_decode] - unary[t, x_t]).item()),
                     "conf": float(conf[t].item()),
+                    "rank_gt": rank_gt,
+                    "rank_x": rank_x,
+                    "gt_in_top5": int(rank_gt > 0 and rank_gt <= 5),
+                    "gt_in_top10": int(rank_gt > 0 and rank_gt <= 10),
+                    "x_in_top5": int(rank_x > 0 and rank_x <= 5),
+                    "top1_margin": float(top1 - top2),
                     "is_correct_raw": int(x_t == y_gt),
                     "is_correct_argmax": int(y_argmax == y_gt),
                     "is_correct_decode": int(y_decode == y_gt),
@@ -452,6 +481,7 @@ def main() -> None:
     fieldnames = [
         "sample_id", "step", "neg_file", "gt_file", "x_t", "y_gt", "y_argmax", "y_decode", "y_final", "y_raw",
         "u_gt", "u_x", "u_pred", "gain_gtx", "gain_predx", "conf",
+        "rank_gt", "rank_x", "gt_in_top5", "gt_in_top10", "x_in_top5", "top1_margin",
         "is_correct_raw", "is_correct_argmax", "is_correct_decode", "is_correct_final", "gate_reverted_to_raw",
         "topo_dist_raw_gt", "topo_dist_pred_gt", "near_junction",
     ]
