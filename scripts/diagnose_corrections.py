@@ -1,6 +1,5 @@
 import argparse
 import csv
-import pickle
 import glob
 import os
 import sys
@@ -51,6 +50,7 @@ def _raise_if_lfs_pointer(path: Path) -> None:
 
 
 def _load_model_state_dict(ckpt_path: str, device: str) -> Mapping[str, Any]:
+    """Load checkpoint in the same way as scripts/test.py first, then fallback formats."""
     ckpt_file = Path(ckpt_path)
     if not ckpt_file.exists():
         raise FileNotFoundError(
@@ -62,49 +62,49 @@ def _load_model_state_dict(ckpt_path: str, device: str) -> Mapping[str, Any]:
 
     _raise_if_lfs_pointer(ckpt_file)
 
+    size_bytes = ckpt_file.stat().st_size
+    load_errors: List[str] = []
+
+    # Attempt 1: same behavior as scripts/test.py
     try:
         state = torch.load(str(ckpt_file), map_location=device)
-    except (RuntimeError, pickle.UnpicklingError) as exc:
-        msg = str(exc).lower()
-        if "weights only load failed" in msg:
-            try:
-                state = torch.load(str(ckpt_file), map_location=device, weights_only=False)
-            except Exception as exc2:
-                raise RuntimeError(
-                    "Failed to load checkpoint with both weights_only=True/False. "
-                    "The file may be corrupted or not a checkpoint.\n"
-                    f"  path: {ckpt_file}"
-                ) from exc2
-        elif "pytorchstreamreader failed reading zip archive" in msg:
-            # TorchScript checkpoints may fail torch.load; try torch.jit.load as fallback.
-            try:
-                script_mod = torch.jit.load(str(ckpt_file), map_location=device)
-                state = script_mod.state_dict()
-            except Exception:
-                _raise_if_lfs_pointer(ckpt_file)
-                raise RuntimeError(
-                    "Failed to load checkpoint: file is not a valid PyTorch checkpoint archive, "
-                    "or is corrupted.\n"
-                    f"  path: {ckpt_file}\n"
-                    "If this file came from Git, ensure it is not an LFS pointer (`git lfs pull`). "
-                    "Otherwise re-export/re-download the checkpoint file."
-                ) from exc
-        else:
-            raise
-
-    if isinstance(state, Mapping):
-        if "model" in state and isinstance(state["model"], Mapping):
+        if isinstance(state, Mapping) and "model" in state and isinstance(state["model"], Mapping):
             return state["model"]
-        if "state_dict" in state and isinstance(state["state_dict"], Mapping):
-            return state["state_dict"]
-        # allow raw state_dict checkpoints
-        sample_keys = list(state.keys())
-        if sample_keys and all(isinstance(k, str) for k in sample_keys):
-            if any(k.startswith(("node_encoder.", "gine.", "encoder.", "decoder.", "crf.")) for k in sample_keys):
-                return state
+    except Exception as exc:
+        load_errors.append(f"torch.load(test.py-style) failed: {type(exc).__name__}: {exc}")
 
-    raise ValueError(
-        f"Unsupported checkpoint format at {ckpt_file}. Expected a dict with key 'model' or a raw model state_dict."
+    # Attempt 2: legacy/full-object checkpoints on newer PyTorch
+    try:
+        state = torch.load(str(ckpt_file), map_location=device, weights_only=False)
+        if isinstance(state, Mapping):
+            if "model" in state and isinstance(state["model"], Mapping):
+                return state["model"]
+            if "state_dict" in state and isinstance(state["state_dict"], Mapping):
+                return state["state_dict"]
+            sample_keys = list(state.keys())
+            if sample_keys and all(isinstance(k, str) for k in sample_keys):
+                if any(k.startswith(("node_encoder.", "gine.", "encoder.", "decoder.", "crf.")) for k in sample_keys):
+                    return state
+    except Exception as exc:
+        load_errors.append(f"torch.load(weights_only=False) failed: {type(exc).__name__}: {exc}")
+
+    # Attempt 3: TorchScript archives
+    try:
+        script_mod = torch.jit.load(str(ckpt_file), map_location=device)
+        return script_mod.state_dict()
+    except Exception as exc:
+        load_errors.append(f"torch.jit.load failed: {type(exc).__name__}: {exc}")
+
+    _raise_if_lfs_pointer(ckpt_file)
+    summary = "\n  - ".join(load_errors[-3:])
+    raise RuntimeError(
+        "Failed to load checkpoint.\n"
+        f"  path: {ckpt_file}\n"
+        f"  size_bytes: {size_bytes}\n"
+        "  attempted loaders:\n"
+        f"  - {summary}\n"
+        "Please first verify this same file can be loaded by scripts/test.py (it uses torch.load(...)[\"model\"]). "
+        "If test.py also fails, the checkpoint file itself is invalid/corrupted or incomplete."
     )
 
 def pair_neg_gt(files: Iterable[str]) -> List[Tuple[str, str]]:
