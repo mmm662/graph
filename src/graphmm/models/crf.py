@@ -42,9 +42,13 @@ class GraphCRF(nn.Module):
             cand_ids.append(c)
             cand_maps.append({int(x.item()): j for j,x in enumerate(c)})
 
-        # forward log-space
+        # forward log-space for linear-chain CRF:
+        # alpha_t(y_t) = unary_t(y_t) + logsumexp_y_{t-1}(alpha_{t-1}(y_{t-1}) + pair(y_{t-1}, y_t))
+        # NOTE:
+        # We intentionally do NOT normalize unary terms with log_softmax here.
+        # CRF partition (logZ) and gold path score must share the same raw energy space.
         u0 = unary_logits[0][cand_ids[0]]
-        alpha = [F.log_softmax(u0, dim=-1)]
+        alpha = [u0]
         for t in range(1, L):
             prev = cand_ids[t-1]
             cur = cand_ids[t]
@@ -63,7 +67,7 @@ class GraphCRF(nn.Module):
 
             prev_alpha = alpha[-1].unsqueeze(1)  # [P,1]
             scores = prev_alpha + pair
-            new_alpha = torch.logsumexp(scores, dim=0) + F.log_softmax(u, dim=-1)
+            new_alpha = torch.logsumexp(scores, dim=0) + u
             alpha.append(new_alpha)
 
         logZ = torch.logsumexp(alpha[-1], dim=0)
