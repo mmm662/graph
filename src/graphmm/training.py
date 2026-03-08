@@ -45,8 +45,18 @@ def train_loop(
     edge_index = graph_batch.edge_index.to(device)
     edge_attr = graph_batch.edge_attr.to(device)
 
+    # road_adj_list = build_adj_list(graph_batch.num_nodes, edge_index)
+    # allowed_prev = k_hop_neighbors(road_adj_list, k=k_hop) if use_crf else None
+
     road_adj_list = build_adj_list(graph_batch.num_nodes, edge_index)
-    allowed_prev = k_hop_neighbors(road_adj_list, k=k_hop) if use_crf else None
+
+    # 反向边：dst->src
+    rev_edge_index = torch.stack([edge_index[1], edge_index[0]], dim=0)
+    road_adj_list_rev = build_adj_list(graph_batch.num_nodes, rev_edge_index)
+
+    # allowed_prev[cur] = 能在k步内到cur的所有prev（在反向图上从cur出发走k步）
+    allowed_prev = k_hop_neighbors(road_adj_list_rev, k=k_hop) if use_crf else None
+
     use_crf_decode = bool(use_crf and crf_train_loss == "crf")
 
     def build_traj_graph_from_samples(samples: List[Sample]) -> Tuple[torch.Tensor, torch.Tensor]:
