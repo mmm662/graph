@@ -144,6 +144,8 @@ python scripts/diagnose_corrections.py --config configs/mall_train.yaml --ckpt r
 - `--output_csv runs/diagnostics/token_diagnostics.csv`：输出逐 token 诊断表
 - `--disable_gate`：仅看解码上限（不经过 gate）
 - `--force_argmax_decode`：禁用 CRF，仅看 unary argmax
+- `--temperature_override 4`：推理时覆盖 temperature（便于扫温度）
+- `--print_raw_wrong_table`：打印 raw-wrong 逐点表（`step/gain_gtx/rank_gt/u_gt/u_x/gt_in_top10`）
 - `--max_hops`：拓扑距离上限
 
 脚本会输出：

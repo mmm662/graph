@@ -295,6 +295,21 @@ def summarize(rows: List[Dict], allowed_prev: List[set], print_prefix: str = "")
         print(f"{print_prefix}[diag] illegal_rate_{name}={avg:.4f}")
 
 
+def print_raw_wrong_table(rows: List[Dict], max_rows: int = 200) -> None:
+    wrong_rows = [r for r in rows if not r["is_correct_raw"]]
+    if not wrong_rows:
+        print("[diag] raw-wrong table: no raw-wrong tokens")
+        return
+
+    print("\n[diag] raw-wrong token table (step/gain_gtx/rank_gt/u_gt/u_x/gt_in_top10)")
+    print("sample_id	step	gain_gtx	rank_gt	u_gt	u_x	gt_in_top10")
+    for r in wrong_rows[:max_rows]:
+        print(
+            f"{r['sample_id']}\t{r['step']}\t{float(r['gain_gtx']):.4f}\t{int(r['rank_gt'])}\t"
+            f"{float(r['u_gt']):.4f}\t{float(r['u_x']):.4f}\t{int(r['gt_in_top10'])}"
+        )
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description="Token-level diagnostics for GraphMM correction pipeline.")
     ap.add_argument("--config", default=str(ROOT / "configs/mall_train.yaml"))
@@ -310,6 +325,8 @@ def main() -> None:
     ap.add_argument("--junction_hops", type=int, default=1, help="distance to junction threshold in hops")
     ap.add_argument("--disable_gate", action="store_true")
     ap.add_argument("--force_argmax_decode", action="store_true", help="disable CRF decode even when available")
+    ap.add_argument("--temperature_override", type=float, default=None, help="override model.temperature during diagnostics")
+    ap.add_argument("--print_raw_wrong_table", action="store_true", help="print per-token table for raw-wrong positions")
     args = ap.parse_args()
 
     with open(args.config, "r", encoding="utf-8") as f:
@@ -373,6 +390,9 @@ def main() -> None:
     ).to(device)
 
     model.load_state_dict(model_state, strict=True)
+    if args.temperature_override is not None:
+        model.temperature = float(args.temperature_override)
+        print(f"[diag] temperature override applied: {model.temperature:.4f}")
     model.eval()
 
     road_adj = build_adj_list(gb.num_nodes, gb.edge_index)
@@ -511,6 +531,8 @@ def main() -> None:
 
     print(f"[diag] wrote token diagnostics: {output_path}")
     summarize(rows, allowed_prev)
+    if args.print_raw_wrong_table:
+        print_raw_wrong_table(rows)
 
 
 if __name__ == "__main__":
