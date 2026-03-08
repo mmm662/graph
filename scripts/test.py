@@ -3,6 +3,7 @@ import argparse
 import os
 import sys
 import glob
+import re
 import pickle
 from pathlib import Path
 from typing import Any, List, Mapping
@@ -51,6 +52,16 @@ def _raise_if_lfs_pointer(path: Path) -> None:
             f"  path: {path}\n"
             "Please install Git LFS and run: `git lfs pull` (or re-download the actual checkpoint file)."
         )
+
+
+def _infer_traj_gcn_layers(state_dict: Mapping[str, Any]) -> int:
+    max_idx = -1
+    pat = re.compile(r"^traj_gcn\.(\d+)\.")
+    for k in state_dict.keys():
+        m = pat.match(str(k))
+        if m:
+            max_idx = max(max_idx, int(m.group(1)))
+    return max_idx + 1
 
 
 def _load_model_state_dict(ckpt_path: str, device: str) -> Mapping[str, Any]:
@@ -210,6 +221,15 @@ def main():
         )
 
     # build model + load checkpoint
+    model_state = _load_model_state_dict(ckpt, device=device)
+    ckpt_traj_layers = _infer_traj_gcn_layers(model_state)
+    cfg_traj_layers = int(cfg["model"].get("traj_gcn_layers", 0))
+    if ckpt_traj_layers != cfg_traj_layers:
+        print(
+            f"[warn] traj_gcn_layers mismatch: cfg={cfg_traj_layers} ckpt={ckpt_traj_layers}; "
+            f"using ckpt value for model construction."
+        )
+
     num_floors = int(gb.floor_id.max().item()) + 1
     model = GraphMMCorrector(
         num_nodes=gb.num_nodes,
@@ -220,7 +240,7 @@ def main():
         dropout=cfg["model"]["dropout"],
         temperature=cfg["model"]["temperature"],
         floor_emb_dim=cfg["model"]["floor_emb_dim"],
-        traj_gcn_layers=cfg["model"]["traj_gcn_layers"],
+        traj_gcn_layers=ckpt_traj_layers,
         use_crf=cfg["model"]["use_crf"],
         unreachable_penalty=cfg["model"]["unreachable_penalty"],
         input_anchor_bias=cfg["model"].get("input_anchor_bias", 0.0),
@@ -229,7 +249,6 @@ def main():
         inference_use_input_context=cfg["model"].get("inference_use_input_context", True),
     ).to(device)
 
-    model_state = _load_model_state_dict(ckpt, device=device)
     model.load_state_dict(model_state, strict=True)
     model.eval()
 
