@@ -54,6 +54,13 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--config", default=str(ROOT/"configs/mall_train.yaml"))
     ap.add_argument("--mat_paths", nargs="*", default=None)
+    ap.add_argument("--train_dir", default=None)
+    ap.add_argument("--valid_dir", default=None)
+    ap.add_argument("--traj_floor_base", type=int, default=None)
+    ap.add_argument("--input_anchor_bias", type=float, default=None)
+    ap.add_argument("--temperature", type=float, default=None)
+    ap.add_argument("--traj_gcn_layers", type=int, default=None)
+    ap.add_argument("--error_token_weight", type=float, default=None)
     args = ap.parse_args()
 
     with open(args.config, "r", encoding="utf-8") as f:
@@ -61,6 +68,16 @@ def main():
 
     if args.mat_paths is not None and len(args.mat_paths) > 0:
         cfg["data"]["mat_paths"] = args.mat_paths
+
+
+    if args.input_anchor_bias is not None:
+        cfg["model"]["input_anchor_bias"] = float(args.input_anchor_bias)
+    if args.temperature is not None:
+        cfg["model"]["temperature"] = float(args.temperature)
+    if args.traj_gcn_layers is not None:
+        cfg["model"]["traj_gcn_layers"] = int(args.traj_gcn_layers)
+    if args.error_token_weight is not None:
+        cfg["train"]["error_token_weight"] = float(args.error_token_weight)
 
     device = cfg["train"]["device"]
     if device == "auto":
@@ -97,10 +114,29 @@ def main():
     k = int(len(samples) * cfg["sim"]["train_ratio"])
     # train_samples, valid_samples = samples[:k], samples[k:]
     xy_mode = cfg["data"].get("traj_xy_mode", "auto")
-    train_samples = load_paired_samples_from_runs("data/traj/train", gb, floor_base=1, xy_mode=xy_mode)
-    valid_samples = load_paired_samples_from_runs("data/traj/valid", gb, floor_base=1, xy_mode=xy_mode)
+    train_dir = args.train_dir or cfg.get("data", {}).get("train_dir", "data/traj/train")
+    valid_dir = args.valid_dir or cfg.get("data", {}).get("valid_dir", "data/traj/valid")
+    traj_floor_base = args.traj_floor_base if args.traj_floor_base is not None else int(cfg.get("data", {}).get("traj_floor_base", 1))
 
-    print(f"[data] train={len(train_samples)} valid={len(valid_samples)}")
+    train_samples = load_paired_samples_from_runs(train_dir, gb, floor_base=traj_floor_base, xy_mode=xy_mode)
+    valid_samples = load_paired_samples_from_runs(valid_dir, gb, floor_base=traj_floor_base, xy_mode=xy_mode)
+
+    if len(train_samples) == 0:
+        raise RuntimeError(
+            f"No valid training samples loaded from {train_dir}. "
+            "Please verify *_neg_*.mat/*_gt_*.mat pairing, floor_base, and trajectory coordinate mapping."
+        )
+
+    print(
+        f"[data] train={len(train_samples)} valid={len(valid_samples)} "
+        f"train_dir={train_dir} valid_dir={valid_dir} floor_base={traj_floor_base} xy_mode={xy_mode}"
+    )
+    print(
+        f"[hparams] input_anchor_bias={float(cfg['model'].get('input_anchor_bias', 0.0)):.3f} "
+        f"temperature={float(cfg['model']['temperature']):.3f} "
+        f"traj_gcn_layers={int(cfg['model']['traj_gcn_layers'])} "
+        f"error_token_weight={float(cfg['train'].get('error_token_weight', 4.0)):.3f}"
+    )
 
     num_floors = int(gb.floor_id.max().item()) + 1
     model = GraphMMCorrector(
