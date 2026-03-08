@@ -20,6 +20,7 @@
 ### 1.2 特征
 - 节点特征：`x_norm, y_norm, log1p(deg_in), log1p(deg_out), is_connector + floor_emb`
 - 边特征：`length_norm, is_vertical, road_type(t), ud, radius_norm`
+- 道路语义：仅 `t=1` 默认双向；其余道路类型均按 `v1->v2` 定向；`c` 代表楼层增量（如 `+1/-1/+2`）。
 
 ### 1.3 模型
 - 路网编码器：Edge-aware GINE
