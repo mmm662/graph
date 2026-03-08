@@ -1,3 +1,4 @@
+# alias of mall_train.yaml for explicit CE baseline runs
 data:
   ppm: 1.0
   directed_road: true

@@ -27,7 +27,15 @@ class GraphCRF(nn.Module):
         train_mode: bool = True,
     ) -> torch.Tensor:
         device = unary_logits.device
+        if unary_logits.dim() != 2:
+            raise ValueError(f"unary_logits must be 2D [L,N], got shape={tuple(unary_logits.shape)}")
         L, N = unary_logits.shape
+        if L != len(gold):
+            raise ValueError(f"gold length mismatch: len(gold)={len(gold)} vs unary_logits.size(0)={L}")
+        if len(allowed_prev) != N:
+            raise ValueError(f"allowed_prev length mismatch: len(allowed_prev)={len(allowed_prev)} vs num_nodes={N}")
+        if all(len(v) == 0 for v in allowed_prev):
+            raise ValueError("allowed_prev is empty for all nodes; cannot run CRF with reachability constraints.")
         gold_t = torch.tensor(gold, dtype=torch.long, device=device)
 
         cand_ids = []
@@ -42,9 +50,13 @@ class GraphCRF(nn.Module):
             cand_ids.append(c)
             cand_maps.append({int(x.item()): j for j,x in enumerate(c)})
 
-        # forward log-space
+        # forward log-space for linear-chain CRF:
+        # alpha_t(y_t) = unary_t(y_t) + logsumexp_y_{t-1}(alpha_{t-1}(y_{t-1}) + pair(y_{t-1}, y_t))
+        # NOTE:
+        # We intentionally do NOT normalize unary terms with log_softmax here.
+        # CRF partition (logZ) and gold path score must share the same raw energy space.
         u0 = unary_logits[0][cand_ids[0]]
-        alpha = [F.log_softmax(u0, dim=-1)]
+        alpha = [u0]
         for t in range(1, L):
             prev = cand_ids[t-1]
             cur = cand_ids[t]
@@ -63,7 +75,7 @@ class GraphCRF(nn.Module):
 
             prev_alpha = alpha[-1].unsqueeze(1)  # [P,1]
             scores = prev_alpha + pair
-            new_alpha = torch.logsumexp(scores, dim=0) + F.log_softmax(u, dim=-1)
+            new_alpha = torch.logsumexp(scores, dim=0) + u
             alpha.append(new_alpha)
 
         logZ = torch.logsumexp(alpha[-1], dim=0)
@@ -91,7 +103,13 @@ class GraphCRF(nn.Module):
         top_r: int = 100,
     ) -> List[int]:
         device = unary_logits.device
+        if unary_logits.dim() != 2:
+            raise ValueError(f"unary_logits must be 2D [L,N], got shape={tuple(unary_logits.shape)}")
         L, N = unary_logits.shape
+        if len(allowed_prev) != N:
+            raise ValueError(f"allowed_prev length mismatch: len(allowed_prev)={len(allowed_prev)} vs num_nodes={N}")
+        if all(len(v) == 0 for v in allowed_prev):
+            raise ValueError("allowed_prev is empty for all nodes; cannot run CRF decoding.")
 
         cand_ids = []
         for t in range(L):

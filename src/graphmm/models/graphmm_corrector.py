@@ -103,6 +103,7 @@ class GraphMMCorrector(nn.Module):
         traj_edge_index: Optional[torch.Tensor] = None,
         traj_edge_weight: Optional[torch.Tensor] = None,
         teacher_forcing: Optional[torch.Tensor] = None,
+        force_autoregressive_decode: bool = False,
     ):
         device = pred_seq.device
         B, L = pred_seq.shape
@@ -126,7 +127,7 @@ class GraphMMCorrector(nn.Module):
         zero = torch.zeros(B, self.road_dim, device=device)
         start_emb = H_R[pred_safe[:, 0]] if L > 0 else zero
 
-        if teacher_forcing is None and self.inference_use_input_context:
+        if teacher_forcing is None and self.inference_use_input_context and (not force_autoregressive_decode):
             # Inference with observed-input context (non-autoregressive over model predictions).
             tf_infer = pred_safe
             dec_inputs = []

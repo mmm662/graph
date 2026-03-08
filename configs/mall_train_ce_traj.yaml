@@ -1,3 +1,4 @@
+# CE + TrajGCN ablation
 data:
   ppm: 1.0
   directed_road: true
@@ -12,7 +13,7 @@ data:
   traj_xy_mode: auto
 
 test:
-  ckpt_path: runs/mall_ce_base/checkpoint.pt
+  ckpt_path: runs/mall_ce_traj/checkpoint.pt
   test_dir: data/traj/test
   floor_base: 1
 
@@ -30,7 +31,7 @@ model:
   dropout: 0.1
   temperature: 4.0
   floor_emb_dim: 8
-  traj_gcn_layers: 0
+  traj_gcn_layers: 1
   use_crf: false
   unreachable_penalty: -5000.0
   input_anchor_bias: 0.0
@@ -59,4 +60,4 @@ train:
   error_token_weight: 4.0
 
 output:
-  run_name: mall_ce_base
+  run_name: mall_ce_traj
