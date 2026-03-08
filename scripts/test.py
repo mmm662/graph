@@ -227,7 +227,7 @@ def main():
     if ckpt_traj_layers != cfg_traj_layers:
         print(
             f"[warn] traj_gcn_layers mismatch: cfg={cfg_traj_layers} ckpt={ckpt_traj_layers}; "
-            f"using ckpt value for model construction."
+            f"using ckpt value for model construction (for traj_gcn ablation, retrain a matching checkpoint)."
         )
 
     num_floors = int(gb.floor_id.max().item()) + 1

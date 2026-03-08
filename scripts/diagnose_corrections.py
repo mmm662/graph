@@ -327,6 +327,7 @@ def main() -> None:
     ap.add_argument("--force_argmax_decode", action="store_true", help="disable CRF decode even when available")
     ap.add_argument("--temperature_override", type=float, default=None, help="override model.temperature during diagnostics")
     ap.add_argument("--print_raw_wrong_table", action="store_true", help="print per-token table for raw-wrong positions")
+    ap.add_argument("--raw_wrong_table_max_rows", type=int, default=20, help="max rows for raw-wrong table when printing is enabled/auto")
     args = ap.parse_args()
 
     with open(args.config, "r", encoding="utf-8") as f:
@@ -367,7 +368,7 @@ def main() -> None:
     if ckpt_traj_layers != cfg_traj_layers:
         print(
             f"[warn] traj_gcn_layers mismatch: cfg={cfg_traj_layers} ckpt={ckpt_traj_layers}; "
-            f"using ckpt value for model construction."
+            f"using ckpt value for model construction (for traj_gcn ablation, retrain a matching checkpoint)."
         )
 
     num_floors = int(gb.floor_id.max().item()) + 1
@@ -394,6 +395,10 @@ def main() -> None:
         model.temperature = float(args.temperature_override)
         print(f"[diag] temperature override applied: {model.temperature:.4f}")
     model.eval()
+    print(
+        f"[diag] effective_model temperature={float(model.temperature):.4f} "
+        f"input_anchor_bias={float(model.input_anchor_bias):.4f} traj_gcn_layers={ckpt_traj_layers}"
+    )
 
     road_adj = build_adj_list(gb.num_nodes, gb.edge_index)
     node_degree = [len(nbrs) for nbrs in road_adj]
@@ -531,8 +536,9 @@ def main() -> None:
 
     print(f"[diag] wrote token diagnostics: {output_path}")
     summarize(rows, allowed_prev)
-    if args.print_raw_wrong_table:
-        print_raw_wrong_table(rows)
+    should_print_wrong = args.print_raw_wrong_table or (int(args.raw_wrong_table_max_rows) > 0 and any((not r["is_correct_raw"]) for r in rows))
+    if should_print_wrong:
+        print_raw_wrong_table(rows, max_rows=max(1, int(args.raw_wrong_table_max_rows)))
 
 
 if __name__ == "__main__":

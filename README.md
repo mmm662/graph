@@ -146,6 +146,7 @@ python scripts/diagnose_corrections.py --config configs/mall_train.yaml --ckpt r
 - `--force_argmax_decode`：禁用 CRF，仅看 unary argmax
 - `--temperature_override 4`：推理时覆盖 temperature（便于扫温度）
 - `--print_raw_wrong_table`：打印 raw-wrong 逐点表（`step/gain_gtx/rank_gt/u_gt/u_x/gt_in_top10`）
+- `--raw_wrong_table_max_rows 20`：控制逐点表最大行数（默认会打印前 20 行 raw-wrong）
 - `--max_hops`：拓扑距离上限
 
 脚本会输出：
