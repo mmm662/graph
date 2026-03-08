@@ -135,7 +135,8 @@ def main():
         f"[hparams] input_anchor_bias={float(cfg['model'].get('input_anchor_bias', 0.0)):.3f} "
         f"temperature={float(cfg['model']['temperature']):.3f} "
         f"traj_gcn_layers={int(cfg['model']['traj_gcn_layers'])} "
-        f"error_token_weight={float(cfg['train'].get('error_token_weight', 4.0)):.3f}"
+        f"error_token_weight={float(cfg['train'].get('error_token_weight', 4.0)):.3f} "
+        f"traj_graph_build_scope={cfg['train'].get('traj_graph_build_scope', 'global')}"
     )
 
     num_floors = int(gb.floor_id.max().item()) + 1
@@ -158,6 +159,10 @@ def main():
     )
 
     run_dir = ROOT / "runs" / cfg["output"]["run_name"]
+    run_dir.mkdir(parents=True, exist_ok=True)
+    with open(run_dir / "resolved_config.yaml", "w", encoding="utf-8") as wf:
+        yaml.safe_dump(cfg, wf, allow_unicode=True, sort_keys=False)
+
     train_loop(
         model=model,
         graph_batch=gb,
@@ -176,11 +181,13 @@ def main():
         ss_end=cfg["train"].get("ss_end", 1.0),
         ss_mode=cfg["train"].get("ss_mode", "linear"),
         traj_graph_source=cfg["train"].get("traj_graph_source", "mixed"),
+        traj_graph_build_scope=cfg["train"].get("traj_graph_build_scope", "global"),
         min_correction_confidence=cfg["model"].get("min_correction_confidence", 0.0),
         min_correction_logit_gain=cfg["model"].get("min_correction_logit_gain", 0.0),
         eval_apply_gate=cfg["train"].get("eval_apply_gate", False),
         crf_train_loss=cfg["train"].get("crf_train_loss", "ce"),
         error_token_weight=cfg["train"].get("error_token_weight", 4.0),
+        resolved_config=cfg,
     )
 
 if __name__ == "__main__":

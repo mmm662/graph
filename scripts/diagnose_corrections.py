@@ -19,6 +19,7 @@ if str(SRC) not in sys.path:
 
 from graphmm.datasets.trajectory_provider import build_transition_graph, coords_to_global_node_seq, load_pts_coord_any
 from graphmm.io.multifloor_builder import build_multifloor_graph_with_features
+from graphmm.io.checkpoint import load_model_state_dict, infer_traj_gcn_layers
 from graphmm.models.graphmm_corrector import GraphMMCorrector, confidence_gate_sequence, decode_argmax
 from graphmm.utils.graph import build_adj_list, k_hop_neighbors
 
@@ -73,89 +74,12 @@ def _try_legacy_torch_load(path: Path, device: str):
         )
 
 def _infer_traj_gcn_layers(state_dict: Mapping[str, Any]) -> int:
-    max_idx = -1
-    pat = re.compile(r"^traj_gcn\.(\d+)\.")
-    for k in state_dict.keys():
-        m = pat.match(str(k))
-        if m:
-            max_idx = max(max_idx, int(m.group(1)))
-    return max_idx + 1
+    return infer_traj_gcn_layers(state_dict)
 
 
 def _load_model_state_dict(ckpt_path: str, device: str) -> Mapping[str, Any]:
-    """Load checkpoint in the same way as scripts/test.py first, then fallback formats."""
-    ckpt_file = Path(ckpt_path)
-    if not ckpt_file.exists():
-        raise FileNotFoundError(
-            f"checkpoint not found: {ckpt_file}. Please pass a valid .pt/.pth file via --ckpt "
-            f"or cfg.test.ckpt_path."
-        )
-    if ckpt_file.is_dir():
-        raise IsADirectoryError(f"checkpoint path is a directory, expected file: {ckpt_file}")
+    return load_model_state_dict(ckpt_path, device=device)
 
-    _raise_if_lfs_pointer(ckpt_file)
-
-    size_bytes = ckpt_file.stat().st_size
-    load_errors: List[str] = []
-
-    # Attempt 1: same behavior as scripts/test.py
-    try:
-        state = torch.load(str(ckpt_file), map_location=device)
-        if isinstance(state, Mapping) and "model" in state and isinstance(state["model"], Mapping):
-            return state["model"]
-    except Exception as exc:
-        load_errors.append(f"torch.load(test.py-style) failed: {type(exc).__name__}: {exc}")
-
-    # Attempt 2: legacy/full-object checkpoints on newer PyTorch
-    try:
-        state = torch.load(str(ckpt_file), map_location=device, weights_only=False)
-        if isinstance(state, Mapping):
-            if "model" in state and isinstance(state["model"], Mapping):
-                return state["model"]
-            if "state_dict" in state and isinstance(state["state_dict"], Mapping):
-                return state["state_dict"]
-            sample_keys = list(state.keys())
-            if sample_keys and all(isinstance(k, str) for k in sample_keys):
-                if any(k.startswith(("node_encoder.", "gine.", "encoder.", "decoder.", "crf.")) for k in sample_keys):
-                    return state
-    except Exception as exc:
-        load_errors.append(f"torch.load(weights_only=False) failed: {type(exc).__name__}: {exc}")
-
-    # Attempt 3: TorchScript archives
-    try:
-        script_mod = torch.jit.load(str(ckpt_file), map_location=device)
-        return script_mod.state_dict()
-    except Exception as exc:
-        load_errors.append(f"torch.jit.load failed: {type(exc).__name__}: {exc}")
-
-    # Attempt 4: PyTorch legacy loader (private API for non-zip edge cases)
-    try:
-        state = _try_legacy_torch_load(ckpt_file, device=device)
-        if isinstance(state, Mapping):
-            if "model" in state and isinstance(state["model"], Mapping):
-                return state["model"]
-            if "state_dict" in state and isinstance(state["state_dict"], Mapping):
-                return state["state_dict"]
-            sample_keys = list(state.keys())
-            if sample_keys and all(isinstance(k, str) for k in sample_keys):
-                if any(k.startswith(("node_encoder.", "gine.", "encoder.", "decoder.", "crf.")) for k in sample_keys):
-                    return state
-    except Exception as exc:
-        load_errors.append(f"torch.serialization._legacy_load failed: {type(exc).__name__}: {exc}")
-
-    _raise_if_lfs_pointer(ckpt_file)
-    summary = "\n  - ".join(load_errors[-4:])
-    sig = _format_file_signature(ckpt_file)
-    raise RuntimeError(
-        "Failed to load checkpoint.\n"
-        f"  path: {ckpt_file}\n"
-        f"  size_bytes: {size_bytes}\n"
-        f"  file_signature: {sig}\n"
-        "  attempted loaders:\n"
-        f"  - {summary}\n"
-        "Please first verify this same file can be loaded by scripts/test.py (it uses torch.load(...)[\"model\"]). "
-        "If test.py also fails, the checkpoint file itself is invalid/corrupted/incomplete or not a PyTorch checkpoint."
-    )
 
 def pair_neg_gt(files: Iterable[str]) -> List[Tuple[str, str]]:
     negs = [p for p in files if ("_neg_" in os.path.basename(p) or "neg" in os.path.basename(p))]
@@ -267,6 +191,9 @@ def summarize(rows: List[Dict], allowed_prev: List[set], print_prefix: str = "")
     block_wrong = block_wrong_numer / block_wrong_denom if block_wrong_denom > 0 else 0.0
 
     crf_gain = sum(int(r["is_correct_decode"]) - int(r["is_correct_argmax"]) for r in rows) / n
+    changed_raw_to_argmax = sum(int(r["y_raw"] != r["y_argmax"]) for r in rows) / n
+    changed_argmax_to_decode = sum(int(r["y_argmax"] != r["y_decode"]) for r in rows) / n
+    changed_decode_to_final = sum(int(r["y_decode"] != r["y_final"]) for r in rows) / n
 
     delta_err = [r["gain_gtx"] for r in rows if not r["is_correct_raw"]]
     delta_all = [r["gain_gtx"] for r in rows]
@@ -275,6 +202,7 @@ def summarize(rows: List[Dict], allowed_prev: List[set], print_prefix: str = "")
     print(f"{print_prefix}[diag] R_keep={r_keep:.4f} R_fix={r_fix:.4f} R_over={r_over:.4f}")
     print(f"{print_prefix}[diag] acc_argmax={argmax_correct / n:.4f} acc_decode={decode_correct / n:.4f} acc_final={sum(int(r['is_correct_final']) for r in rows) / n:.4f}")
     print(f"{print_prefix}[diag] R_reject_correct={reject_correct:.4f} R_block_wrong={block_wrong:.4f} crf_gain={crf_gain:.4f}")
+    print(f"{print_prefix}[diag] changed_raw_to_argmax={changed_raw_to_argmax:.4f} changed_argmax_to_decode={changed_argmax_to_decode:.4f} changed_decode_to_final={changed_decode_to_final:.4f}")
     if delta_all:
         print(f"{print_prefix}[diag] gain_gtx mean(all)={sum(delta_all) / len(delta_all):.4f} mean(raw_wrong)={(sum(delta_err) / len(delta_err)) if delta_err else 0.0:.4f}")
 
@@ -408,6 +336,13 @@ def main() -> None:
     k_hop = int(cfg["train"]["k_hop"])
     allowed_prev = k_hop_neighbors(road_adj, k=k_hop)
     use_crf_decode = bool(use_crf_cfg and crf_train_loss == "crf" and not args.force_argmax_decode)
+
+    print(f"[diag] use_crf_cfg={int(use_crf_cfg)} crf_train_loss={crf_train_loss} use_crf_decode={int(use_crf_decode)}")
+    print(f"[diag] inference_use_input_context={int(cfg['model'].get('inference_use_input_context', True))}")
+    print(f"[diag] input_anchor_bias={float(cfg['model'].get('input_anchor_bias', 0.0)):.4f}")
+    print(f"[diag] apply_input_anchor_bias_inference={int(cfg['model'].get('apply_input_anchor_bias_inference', False))}")
+    print(f"[diag] traj_gcn_layers={int(cfg['model'].get('traj_gcn_layers', 0))}")
+    print(f"[diag] decode_mode={'input_context' if cfg['model'].get('inference_use_input_context', True) else 'autoregressive'}")
 
     all_files = glob.glob(os.path.join(test_dir, "**", "*.mat"), recursive=True)
     pairs = pair_neg_gt(all_files)

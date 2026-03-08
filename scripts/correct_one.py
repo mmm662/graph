@@ -9,6 +9,7 @@ if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 from graphmm.io.multifloor_builder import build_multifloor_graph_with_features
+from graphmm.io.checkpoint import load_model_state_dict
 from graphmm.models.graphmm_corrector import GraphMMCorrector, decode_argmax
 from graphmm.datasets.trajectory_provider import build_transition_graph
 from graphmm.utils.graph import build_adj_list, k_hop_neighbors
@@ -60,8 +61,8 @@ def main():
         input_anchor_bias=cfg["model"].get("input_anchor_bias", 0.0),
     ).to(device)
 
-    ckpt = torch.load(args.ckpt, map_location=device)
-    model.load_state_dict(ckpt["model"], strict=True)
+    model_state = load_model_state_dict(args.ckpt, device=device)
+    model.load_state_dict(model_state, strict=True)
     model.eval()
 
     pred_seq = parse_int_list(args.pred)
@@ -96,7 +97,10 @@ def main():
     road_adj_list = build_adj_list(gb.num_nodes, gb.edge_index)
     allowed_prev = k_hop_neighbors(road_adj_list, k=cfg["train"]["k_hop"])
 
-    if cfg["model"]["use_crf"]:
+    crf_train_loss = str(cfg.get("train", {}).get("crf_train_loss", "ce")).lower()
+    use_crf_decode = bool(cfg["model"]["use_crf"] and crf_train_loss == "crf")
+    print(f"[correct_one] use_crf_cfg={int(cfg['model']['use_crf'])} crf_train_loss={crf_train_loss} use_crf_decode={int(use_crf_decode)}")
+    if use_crf_decode:
         path = model.crf.viterbi_one(
             unary_logits=unary_logits[0, :len(pred_seq), :],
             H=H_R,

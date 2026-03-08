@@ -17,6 +17,7 @@ if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 from graphmm.io.multifloor_builder import build_multifloor_graph_with_features
+from graphmm.io.checkpoint import load_model_state_dict, infer_traj_gcn_layers
 from graphmm.models.graphmm_corrector import GraphMMCorrector, decode_argmax, confidence_gate_sequence
 from graphmm.utils.graph import (
     build_adj_list,
@@ -55,74 +56,11 @@ def _raise_if_lfs_pointer(path: Path) -> None:
 
 
 def _infer_traj_gcn_layers(state_dict: Mapping[str, Any]) -> int:
-    max_idx = -1
-    pat = re.compile(r"^traj_gcn\.(\d+)\.")
-    for k in state_dict.keys():
-        m = pat.match(str(k))
-        if m:
-            max_idx = max(max_idx, int(m.group(1)))
-    return max_idx + 1
+    return infer_traj_gcn_layers(state_dict)
 
 
 def _load_model_state_dict(ckpt_path: str, device: str) -> Mapping[str, Any]:
-    ckpt_file = Path(ckpt_path)
-    if not ckpt_file.exists():
-        raise FileNotFoundError(f"checkpoint not found: {ckpt_file}")
-    if ckpt_file.is_dir():
-        raise IsADirectoryError(f"checkpoint path is a directory, expected file: {ckpt_file}")
-
-    _raise_if_lfs_pointer(ckpt_file)
-    load_errors: List[str] = []
-
-    # 1) test.py original behavior
-    try:
-        state = torch.load(str(ckpt_file), map_location=device)
-        if isinstance(state, Mapping) and "model" in state and isinstance(state["model"], Mapping):
-            return state["model"]
-    except Exception as exc:
-        load_errors.append(f"torch.load(default) failed: {type(exc).__name__}: {exc}")
-
-    # 2) legacy/full-object checkpoints
-    try:
-        state = torch.load(str(ckpt_file), map_location=device, weights_only=False)
-        if isinstance(state, Mapping):
-            if "model" in state and isinstance(state["model"], Mapping):
-                return state["model"]
-            if "state_dict" in state and isinstance(state["state_dict"], Mapping):
-                return state["state_dict"]
-            keys = list(state.keys())
-            if keys and all(isinstance(k, str) for k in keys):
-                if any(k.startswith(("node_encoder.", "gine.", "encoder.", "decoder.", "crf.")) for k in keys):
-                    return state
-    except Exception as exc:
-        load_errors.append(f"torch.load(weights_only=False) failed: {type(exc).__name__}: {exc}")
-
-    # 3) TorchScript
-    try:
-        mod = torch.jit.load(str(ckpt_file), map_location=device)
-        return mod.state_dict()
-    except Exception as exc:
-        load_errors.append(f"torch.jit.load failed: {type(exc).__name__}: {exc}")
-
-    # 4) legacy private loader
-    try:
-        with ckpt_file.open("rb") as f:
-            state = torch.serialization._legacy_load(f, map_location=device, pickle_module=pickle, encoding="latin1")
-        if isinstance(state, Mapping):
-            if "model" in state and isinstance(state["model"], Mapping):
-                return state["model"]
-            if "state_dict" in state and isinstance(state["state_dict"], Mapping):
-                return state["state_dict"]
-    except Exception as exc:
-        load_errors.append(f"torch.serialization._legacy_load failed: {type(exc).__name__}: {exc}")
-
-    summary = "\n  - ".join(load_errors[-4:])
-    raise RuntimeError(
-        "Failed to load checkpoint with all loaders.\n"
-        f"  path: {ckpt_file}\n"
-        "  attempted loaders:\n"
-        f"  - {summary}"
-    )
+    return load_model_state_dict(ckpt_path, device=device)
 
 
 def pair_neg_gt(files):
@@ -197,6 +135,14 @@ def main():
     min_correction_logit_gain = float(cfg.get("model", {}).get("min_correction_logit_gain", 0.0))
     crf_train_loss = str(cfg.get("train", {}).get("crf_train_loss", "ce")).lower()
     use_crf_decode = bool(cfg.get("model", {}).get("use_crf", False) and crf_train_loss == "crf")
+
+    print(
+        f"[test] use_crf_cfg={int(cfg.get('model', {}).get('use_crf', False))} crf_train_loss={crf_train_loss} use_crf_decode={int(use_crf_decode)} "
+        f"traj_gcn_layers={int(cfg.get('model', {}).get('traj_gcn_layers', 0))} "
+        f"inference_use_input_context={int(cfg.get('model', {}).get('inference_use_input_context', True))} "
+        f"input_anchor_bias={float(cfg.get('model', {}).get('input_anchor_bias', 0.0)):.4f} "
+        f"apply_input_anchor_bias_inference={int(cfg.get('model', {}).get('apply_input_anchor_bias_inference', False))}"
+    )
 
     if ckpt is None:
         raise ValueError("ckpt_path is missing. Fill cfg.test.ckpt_path or pass --ckpt ...")
@@ -379,16 +325,27 @@ def main():
 
     total_tokens = 0
     changed_tokens = 0
-    for raw, corr in zip(raw_preds, final_preds):
-        L = min(len(raw), len(corr))
+    ch_raw_argmax = 0
+    ch_argmax_decode = 0
+    ch_decode_final = 0
+    for raw, ung, gat, fin in zip(raw_preds, preds_ungated, preds_gated, final_preds):
+        L = min(len(raw), len(ung), len(gat), len(fin))
         total_tokens += L
-        changed_tokens += sum(int(a != b) for a, b in zip(raw[:L], corr[:L]))
+        changed_tokens += sum(int(a != b) for a, b in zip(raw[:L], fin[:L]))
+        ch_raw_argmax += sum(int(a != b) for a, b in zip(raw[:L], ung[:L]))
+        ch_argmax_decode += 0
+        ch_decode_final += sum(int(a != b) for a, b in zip(ung[:L], fin[:L]))
     change_ratio = (changed_tokens / total_tokens) if total_tokens > 0 else 0.0
+    changed_raw_to_argmax = (ch_raw_argmax / total_tokens) if total_tokens > 0 else 0.0
+    changed_argmax_to_decode = (ch_argmax_decode / total_tokens) if total_tokens > 0 else 0.0
+    changed_decode_to_final = (ch_decode_final / total_tokens) if total_tokens > 0 else 0.0
 
     print(
         f"\n[TEST] n={len(final_preds)} raw_tok={raw_tok:.3f} ungated_tok={ungated_tok:.3f} gated_tok={gated_tok:.3f} "
         f"tok={tok:.3f} raw_seq={raw_seq:.3f} ungated_seq={ungated_seq:.3f} gated_seq={gated_seq:.3f} seq={seq:.3f} "
-        f"feas@k={feas:.3f} changed={change_ratio:.3f} gate_enabled={int(not args.disable_gate)} crf_decode={int(use_crf_decode)} "
+        f"feas@k={feas:.3f} changed={change_ratio:.3f} changed_raw_to_argmax={changed_raw_to_argmax:.3f} "
+        f"changed_argmax_to_decode={changed_argmax_to_decode:.3f} changed_decode_to_final={changed_decode_to_final:.3f} "
+        f"gate_enabled={int(not args.disable_gate)} crf_decode={int(use_crf_decode)} "
         f"conf_gate={min_correction_confidence:.2f} gain_gate={min_correction_logit_gain:.2f}"
     )
 
