@@ -3,7 +3,9 @@ import argparse
 import os
 import sys
 import glob
+import pickle
 from pathlib import Path
+from typing import Any, List, Mapping
 
 import yaml
 import torch
@@ -31,6 +33,85 @@ def _ensure_str(x, name: str) -> str:
             raise ValueError(f"{name} list is empty")
         return str(x[0])
     return str(x)
+
+
+def _peek_file_prefix(path: Path, n: int = 256) -> bytes:
+    with path.open("rb") as f:
+        return f.read(n)
+
+
+def _raise_if_lfs_pointer(path: Path) -> None:
+    try:
+        head = _peek_file_prefix(path, n=256)
+    except OSError:
+        return
+    if b"git-lfs.github.com/spec/v1" in head:
+        raise RuntimeError(
+            "Checkpoint file appears to be a Git LFS pointer, not the real model weights.\n"
+            f"  path: {path}\n"
+            "Please install Git LFS and run: `git lfs pull` (or re-download the actual checkpoint file)."
+        )
+
+
+def _load_model_state_dict(ckpt_path: str, device: str) -> Mapping[str, Any]:
+    ckpt_file = Path(ckpt_path)
+    if not ckpt_file.exists():
+        raise FileNotFoundError(f"checkpoint not found: {ckpt_file}")
+    if ckpt_file.is_dir():
+        raise IsADirectoryError(f"checkpoint path is a directory, expected file: {ckpt_file}")
+
+    _raise_if_lfs_pointer(ckpt_file)
+    load_errors: List[str] = []
+
+    # 1) test.py original behavior
+    try:
+        state = torch.load(str(ckpt_file), map_location=device)
+        if isinstance(state, Mapping) and "model" in state and isinstance(state["model"], Mapping):
+            return state["model"]
+    except Exception as exc:
+        load_errors.append(f"torch.load(default) failed: {type(exc).__name__}: {exc}")
+
+    # 2) legacy/full-object checkpoints
+    try:
+        state = torch.load(str(ckpt_file), map_location=device, weights_only=False)
+        if isinstance(state, Mapping):
+            if "model" in state and isinstance(state["model"], Mapping):
+                return state["model"]
+            if "state_dict" in state and isinstance(state["state_dict"], Mapping):
+                return state["state_dict"]
+            keys = list(state.keys())
+            if keys and all(isinstance(k, str) for k in keys):
+                if any(k.startswith(("node_encoder.", "gine.", "encoder.", "decoder.", "crf.")) for k in keys):
+                    return state
+    except Exception as exc:
+        load_errors.append(f"torch.load(weights_only=False) failed: {type(exc).__name__}: {exc}")
+
+    # 3) TorchScript
+    try:
+        mod = torch.jit.load(str(ckpt_file), map_location=device)
+        return mod.state_dict()
+    except Exception as exc:
+        load_errors.append(f"torch.jit.load failed: {type(exc).__name__}: {exc}")
+
+    # 4) legacy private loader
+    try:
+        with ckpt_file.open("rb") as f:
+            state = torch.serialization._legacy_load(f, map_location=device, pickle_module=pickle, encoding="latin1")
+        if isinstance(state, Mapping):
+            if "model" in state and isinstance(state["model"], Mapping):
+                return state["model"]
+            if "state_dict" in state and isinstance(state["state_dict"], Mapping):
+                return state["state_dict"]
+    except Exception as exc:
+        load_errors.append(f"torch.serialization._legacy_load failed: {type(exc).__name__}: {exc}")
+
+    summary = "\n  - ".join(load_errors[-4:])
+    raise RuntimeError(
+        "Failed to load checkpoint with all loaders.\n"
+        f"  path: {ckpt_file}\n"
+        "  attempted loaders:\n"
+        f"  - {summary}"
+    )
 
 
 def pair_neg_gt(files):
@@ -148,8 +229,8 @@ def main():
         inference_use_input_context=cfg["model"].get("inference_use_input_context", True),
     ).to(device)
 
-    state = torch.load(ckpt, map_location=device)
-    model.load_state_dict(state["model"], strict=True)
+    model_state = _load_model_state_dict(ckpt, device=device)
+    model.load_state_dict(model_state, strict=True)
     model.eval()
 
     if cfg["model"]["use_crf"] and not use_crf_decode:
