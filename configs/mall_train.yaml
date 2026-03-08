@@ -12,7 +12,7 @@ data:
   traj_xy_mode: auto
 test:
   ckpt_path: runs/mall_final_crf/checkpoint.pt
-  test_dir: data/traj/valid
+  test_dir: data/traj/test
   floor_base: 1
 sim:
   num_samples: 1200
@@ -28,7 +28,7 @@ model:
   temperature: 6.0
   floor_emb_dim: 8
   traj_gcn_layers: 1
-  use_crf: true
+  use_crf: false
   unreachable_penalty: -5000.0
   input_anchor_bias: 1.50
   apply_input_anchor_bias_inference: true
