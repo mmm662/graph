@@ -79,6 +79,26 @@ python scripts/train.py --config configs/mall_train.yaml
 python scripts/train.py --config configs/mall_train.yaml --mat_paths data/mall/floor1.mat data/mall/floor2.mat data/mall/floor3.mat data/mall/floor4.mat data/mall/floor5.mat
 ```
 
+### 4.0 快速 ablation（anchor / traj GCN / temperature / err weight）
+
+为了快速复现“4组最小实验”，可直接覆盖训练参数（无需改 yaml）：
+
+```bash
+# A: baseline
+python scripts/train.py --config configs/mall_train.yaml
+
+# B: 中等 anchor
+python scripts/train.py --config configs/mall_train.yaml --input_anchor_bias 1.0
+
+# C: 关闭 traj GCN
+python scripts/train.py --config configs/mall_train.yaml --input_anchor_bias 1.0 --traj_gcn_layers 0
+
+# D: 关闭 traj GCN + 降温度 + 提高错误点权重
+python scripts/train.py --config configs/mall_train.yaml --input_anchor_bias 1.0 --traj_gcn_layers 0 --temperature 4 --error_token_weight 8
+```
+
+`train.py` 会打印实际生效的 `input_anchor_bias/temperature/traj_gcn_layers/error_token_weight`。
+
 ### 4.1 训练日志字段解释
 每个 epoch 会打印以下核心指标：
 - `raw_tok`：原始输入轨迹（不纠错）的 token accuracy（基线）
