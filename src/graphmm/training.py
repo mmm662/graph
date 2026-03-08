@@ -26,15 +26,21 @@ def train_loop(
     ss_end: float = 1.0,
     ss_mode: str = "linear",
     traj_graph_source: str = "mixed",
+    traj_graph_build_scope: str = "global",
     min_correction_confidence: float = 0.0,
     min_correction_logit_gain: float = 0.0,
     eval_apply_gate: bool = False,
     crf_train_loss: str = "ce",
     error_token_weight: float = 4.0,
+    resolved_config: Optional[dict] = None,
 ):
     crf_train_loss = str(crf_train_loss).lower()
     if crf_train_loss not in {"ce", "crf"}:
         raise ValueError(f"crf_train_loss must be one of ['ce', 'crf'], got: {crf_train_loss}")
+
+    traj_graph_build_scope = str(traj_graph_build_scope).lower()
+    if traj_graph_build_scope not in {"global", "batch"}:
+        raise ValueError(f"traj_graph_build_scope must be one of ['global', 'batch'], got: {traj_graph_build_scope}")
 
     os.makedirs(run_dir, exist_ok=True)
     model = model.to(device)
@@ -90,6 +96,16 @@ def train_loop(
         edge_idx = torch.stack([src,dst], dim=0)
         return edge_idx, w
 
+    global_traj_graph = None
+
+    def get_traj_graph(samples_for_batch: List[Sample]):
+        nonlocal global_traj_graph
+        if traj_graph_build_scope == "global":
+            if global_traj_graph is None:
+                global_traj_graph = build_traj_graph_from_samples(train_samples)
+            return global_traj_graph
+        return build_traj_graph_from_samples(samples_for_batch)
+
     def run_eval(samples: List[Sample]):
         model.eval()
         raw_all=[]; pred_all=[]; gated_all=[]; all_g=[]
@@ -101,7 +117,7 @@ def train_loop(
                 pred_pad, lengths = pad_batch(pred_seqs, pad_id=PADDING_ID)
                 pred_pad = pred_pad.to(device); lengths = lengths.to(device)
 
-                traj_edge_index, traj_edge_weight = build_traj_graph_from_samples(batch)
+                traj_edge_index, traj_edge_weight = get_traj_graph(batch)
                 unary_logits, H_R = model.forward_unary(
                     pred_pad, lengths,
                     node_num_feat=node_num_feat,
@@ -189,7 +205,8 @@ def train_loop(
                 edge_attr=edge_attr,
                 traj_edge_index=traj_edge_index,
                 traj_edge_weight=traj_edge_weight,
-                teacher_forcing=None
+                teacher_forcing=None,
+                force_autoregressive_decode=True
             )
             ss_tokens = torch.argmax(logits_ss, dim=-1)
             ss_tokens = ss_tokens.masked_fill(pred_pad == PADDING_ID, PADDING_ID)
@@ -215,8 +232,6 @@ def train_loop(
         random.shuffle(train_samples)
         total_loss=0.0; total_cnt=0
 
-        traj_edge_index, traj_edge_weight = build_traj_graph_from_samples(train_samples)
-
         for i in tqdm(range(0, len(train_samples), batch_size), desc=f"epoch {ep}"):
             batch = train_samples[i:i+batch_size]
             pred_seqs=[s.pred for s in batch]
@@ -225,6 +240,7 @@ def train_loop(
             true_pad, _ = pad_batch(true_seqs, pad_id=PADDING_ID)
 
             pred_pad = pred_pad.to(device); true_pad = true_pad.to(device); lengths = lengths.to(device)
+            traj_edge_index, traj_edge_weight = get_traj_graph(batch)
 
             tf_ratio = teacher_forcing_ratio(ep)
             if tf_ratio >= 1.0:
@@ -282,9 +298,10 @@ def train_loop(
             em = {"raw_tok":0.0,"pred_tok":0.0,"pred_seq":0.0,"gated_tok":0.0,"gated_seq":0.0,"final_tok":0.0,"final_seq":0.0,"feas":0.0,"pred_changed":0.0,"gated_changed":0.0,"changed":0.0,"gate_keep":0.0}
 
         print(
-            f"[epoch {ep:02d}] tf_ratio={teacher_forcing_ratio(ep):.3f} traj_graph={str(traj_graph_source).lower()} "
+            f"[epoch {ep:02d}] tf_ratio={teacher_forcing_ratio(ep):.3f} traj_graph={str(traj_graph_source).lower()} traj_scope={traj_graph_build_scope} "
             f"conf_gate={min_correction_confidence:.2f} gain_gate={min_correction_logit_gain:.2f} "
-            f"eval_gate={int(eval_apply_gate)} crf_loss={crf_train_loss} crf_decode={int(use_crf_decode)} err_w={float(error_token_weight):.1f} loss={train_loss:.4f} "
+            f"eval_gate={int(eval_apply_gate)} infer_ctx={int(model.inference_use_input_context)} anchor_inf={int(model.apply_input_anchor_bias_inference)} anchor_train={int(model.apply_input_anchor_bias_training)} "
+            f"use_crf={int(use_crf)} crf_loss={crf_train_loss} crf_decode={int(use_crf_decode)} err_w={float(error_token_weight):.1f} loss={train_loss:.4f} "
             f"raw_tok={em['raw_tok']:.3f} pred_tok={em['pred_tok']:.3f} gated_tok={em['gated_tok']:.3f} "
             f"final_tok={em['final_tok']:.3f} final_seq={em['final_seq']:.3f} pred_changed={em['pred_changed']:.3f} gated_changed={em['gated_changed']:.3f} changed={em['changed']:.3f} gate_keep={em['gate_keep']:.3f} feas@k={em['feas']:.3f}"
         )
@@ -293,6 +310,6 @@ def train_loop(
         if score > best:
             best = score
             torch.save(
-                {"model": model.state_dict(), "epoch": ep, "val_tok": em["final_tok"], "val_seq": em["final_seq"], "feas": em["feas"], "raw_tok": em["raw_tok"], "pred_tok": em["pred_tok"], "gated_tok": em["gated_tok"], "changed": em["changed"]},
+                {"model": model.state_dict(), "epoch": ep, "val_tok": em["final_tok"], "val_seq": em["final_seq"], "feas": em["feas"], "raw_tok": em["raw_tok"], "pred_tok": em["pred_tok"], "gated_tok": em["gated_tok"], "changed": em["changed"], "config": resolved_config or {}, "git_info": {"run_name": os.path.basename(run_dir)}},
                 os.path.join(run_dir, "checkpoint.pt")
             )
