@@ -79,6 +79,26 @@ python scripts/train.py --config configs/mall_train.yaml
 python scripts/train.py --config configs/mall_train.yaml --mat_paths data/mall/floor1.mat data/mall/floor2.mat data/mall/floor3.mat data/mall/floor4.mat data/mall/floor5.mat
 ```
 
+### 4.0 快速 ablation（anchor / traj GCN / temperature / err weight）
+
+为了快速复现“4组最小实验”，可直接覆盖训练参数（无需改 yaml）：
+
+```bash
+# A: baseline
+python scripts/train.py --config configs/mall_train.yaml
+
+# B: 中等 anchor
+python scripts/train.py --config configs/mall_train.yaml --input_anchor_bias 1.0
+
+# C: 关闭 traj GCN
+python scripts/train.py --config configs/mall_train.yaml --input_anchor_bias 1.0 --traj_gcn_layers 0
+
+# D: 关闭 traj GCN + 降温度 + 提高错误点权重
+python scripts/train.py --config configs/mall_train.yaml --input_anchor_bias 1.0 --traj_gcn_layers 0 --temperature 4 --error_token_weight 8
+```
+
+`train.py` 会打印实际生效的 `input_anchor_bias/temperature/traj_gcn_layers/error_token_weight`。
+
 ### 4.1 训练日志字段解释
 每个 epoch 会打印以下核心指标：
 - `raw_tok`：原始输入轨迹（不纠错）的 token accuracy（基线）
@@ -109,6 +129,31 @@ python scripts/test.py --config configs/mall_train.yaml --ckpt runs/<run_name>/c
 python scripts/test.py --config configs/mall_train.yaml --max_print 10
 python scripts/test.py --config configs/mall_train.yaml --disable_gate
 ```
+
+
+
+### 5.1 纠错诊断（逐时刻日志 + 核心排查指标）
+
+当你要定位“过度纠错 / 纠错失败 / CRF 与 gate 是否起反作用”时，可运行：
+
+```bash
+python scripts/diagnose_corrections.py --config configs/mall_train.yaml --ckpt runs/<run_name>/checkpoint.pt --test_dir data/traj/test
+```
+
+常用参数：
+- `--output_csv runs/diagnostics/token_diagnostics.csv`：输出逐 token 诊断表
+- `--disable_gate`：仅看解码上限（不经过 gate）
+- `--force_argmax_decode`：禁用 CRF，仅看 unary argmax
+- `--temperature_override 4`：推理时覆盖 temperature（便于扫温度）
+- `--print_raw_wrong_table`：打印 raw-wrong 逐点表（`step/gain_gtx/rank_gt/u_gt/u_x/gt_in_top10`）
+- `--raw_wrong_table_max_rows 20`：控制逐点表最大行数（默认会打印前 20 行 raw-wrong）
+- `--max_hops`：拓扑距离上限
+
+脚本会输出：
+- `R_keep / R_fix / R_over`
+- `R_reject_correct / R_block_wrong`（gate 是否过保守）
+- `illegal_rate_raw/argmax/decode/final`（拓扑非法转移率）
+- 逐时刻 CSV 字段（`x_t, y_gt, y_argmax, y_decode, y_final, u_gt, u_x, gain_gtx, conf, rank_gt, gt_in_top10, top1_margin, topo_dist_* ...`）
 
 测试输出会同时给出：
 - `raw_tok/raw_seq`（原输入基线）
