@@ -52,13 +52,24 @@ def build_multifloor_graph_with_features(
         floor_id[off:off + n] = f
 
     edges = []
-    raw_attrs = []  # (t,ud,r)
+    raw_attrs = []  # (t,c,ud,r)
     is_vert = []
 
-    def add_edge(u: int, v: int, t: float, ud: float, r: float, vertical: bool):
+    def add_edge(u: int, v: int, t: float, c: float, ud: float, r: float, vertical: bool):
         edges.append((u, v))
-        raw_attrs.append((t, ud, r))
+        raw_attrs.append((t, c, ud, r))
         is_vert.append(vertical)
+
+    def _is_bidirectional_road(t: float, c: float) -> bool:
+        """Road semantics from map spec:
+        - only t=1 roads are bidirectional by default
+        - all other t (including arcs/one-way/cross-floor) follow v1->v2 direction
+        - any non-zero c means cross-floor intent => directed
+        """
+        if abs(float(c)) > 1e-6:
+            return False
+        t_int = int(round(float(t)))
+        return t_int == 1
 
     # intra-floor
     for f, pf in enumerate(per_floor):
@@ -75,11 +86,28 @@ def build_multifloor_graph_with_features(
             u = off + (u_local - 1)
             v = off + (v_local - 1)
             t = float(e[2]) if e.shape[0] >= 3 else 0.0
+            c = float(e[3]) if e.shape[0] >= 4 else 0.0
             r = float(e[4]) if e.shape[0] >= 5 else 0.0
             ud = float(e[5]) if e.shape[0] >= 6 else 0.0
-            add_edge(u, v, t=t, ud=ud, r=r, vertical=False)
-            if not directed_road:
-                add_edge(v, u, t=t, ud=-ud, r=r, vertical=False)
+
+            # cross-floor edge specified in E via c (floor delta)
+            # when valid target floor exists, interpret v2 on target floor.
+            t_floor = f + int(round(c))
+            if abs(c) > 1e-6 and (0 <= t_floor < len(per_floor)):
+                n_t = per_floor[t_floor]["coord"].shape[0]
+                if 1 <= v_local <= n_t:
+                    v_global = offsets[t_floor] + (v_local - 1)
+                    add_edge(u, v_global, t=t, c=c, ud=ud, r=r, vertical=True)
+                    if not directed_road:
+                        add_edge(v_global, u, t=t, c=-c, ud=-ud, r=r, vertical=True)
+                    continue
+
+            is_vertical_edge = bool(int(round(t)) == 10 or abs(c) > 1e-6)
+            add_edge(u, v, t=t, c=c, ud=ud, r=r, vertical=is_vertical_edge)
+
+            add_rev = (not directed_road) or _is_bidirectional_road(t=t, c=c)
+            if add_rev:
+                add_edge(v, u, t=t, c=-c, ud=-ud, r=r, vertical=is_vertical_edge)
 
     # vertical by coord match
     for f in range(len(per_floor) - 1):
@@ -99,9 +127,9 @@ def build_multifloor_graph_with_features(
                 continue
             u = off_a + i
             for v in bucket[k]:
-                add_edge(u, v, t=10.0, ud=0.0, r=0.0, vertical=True)
+                add_edge(u, v, t=10.0, c=1.0, ud=1.0, r=0.0, vertical=True)
                 if add_vertical_bidirectional:
-                    add_edge(v, u, t=10.0, ud=0.0, r=0.0, vertical=True)
+                    add_edge(v, u, t=10.0, c=-1.0, ud=-1.0, r=0.0, vertical=True)
 
     # dedup
     seen = set()
@@ -125,14 +153,17 @@ def build_multifloor_graph_with_features(
     len_mean = float(length.mean()) if length.size else 1.0
     length_n = length / max(len_mean, 1e-6)
 
-    t_raw = np.array([t for (t, ud, r) in raw_attrs], dtype=np.float32)
-    ud_raw = np.array([ud for (t, ud, r) in raw_attrs], dtype=np.float32)
-    r_raw = np.array([r for (t, ud, r) in raw_attrs], dtype=np.float32)
+    t_raw = np.array([t for (t, c, ud, r) in raw_attrs], dtype=np.float32)
+    c_raw = np.array([c for (t, c, ud, r) in raw_attrs], dtype=np.float32)
+    ud_raw = np.array([ud for (t, c, ud, r) in raw_attrs], dtype=np.float32)
+    r_raw = np.array([r for (t, c, ud, r) in raw_attrs], dtype=np.float32)
     nz = r_raw[r_raw > 0]
     r_mean = float(nz.mean()) if nz.size else 1.0
     r_n = r_raw / max(r_mean, 1e-6)
 
     is_vertical = np.array(is_vert, dtype=np.float32)
+    # if c indicates floor transition, force vertical flag.
+    is_vertical = np.maximum(is_vertical, (np.abs(c_raw) > 1e-6).astype(np.float32))
     edge_attr = np.stack([length_n, is_vertical, t_raw, ud_raw, r_n], axis=1).astype(np.float32)
 
     x_norm = coord_xy[:, 0] / max(col - 1, 1)
