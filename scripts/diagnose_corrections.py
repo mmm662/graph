@@ -1,5 +1,6 @@
 import argparse
 import csv
+import pickle
 import glob
 import os
 import sys
@@ -49,6 +50,27 @@ def _raise_if_lfs_pointer(path: Path) -> None:
         )
 
 
+
+
+def _format_file_signature(path: Path) -> str:
+    try:
+        head = _peek_file_prefix(path, n=32)
+    except OSError:
+        return "<unreadable>"
+    hex_part = head.hex()
+    ascii_part = ''.join(chr(b) if 32 <= b <= 126 else '.' for b in head)
+    return f"hex={hex_part} ascii={ascii_part}"
+
+
+def _try_legacy_torch_load(path: Path, device: str):
+    with path.open('rb') as f:
+        return torch.serialization._legacy_load(
+            f,
+            map_location=device,
+            pickle_module=pickle,
+            encoding='latin1',
+        )
+
 def _load_model_state_dict(ckpt_path: str, device: str) -> Mapping[str, Any]:
     """Load checkpoint in the same way as scripts/test.py first, then fallback formats."""
     ckpt_file = Path(ckpt_path)
@@ -95,16 +117,33 @@ def _load_model_state_dict(ckpt_path: str, device: str) -> Mapping[str, Any]:
     except Exception as exc:
         load_errors.append(f"torch.jit.load failed: {type(exc).__name__}: {exc}")
 
+    # Attempt 4: PyTorch legacy loader (private API for non-zip edge cases)
+    try:
+        state = _try_legacy_torch_load(ckpt_file, device=device)
+        if isinstance(state, Mapping):
+            if "model" in state and isinstance(state["model"], Mapping):
+                return state["model"]
+            if "state_dict" in state and isinstance(state["state_dict"], Mapping):
+                return state["state_dict"]
+            sample_keys = list(state.keys())
+            if sample_keys and all(isinstance(k, str) for k in sample_keys):
+                if any(k.startswith(("node_encoder.", "gine.", "encoder.", "decoder.", "crf.")) for k in sample_keys):
+                    return state
+    except Exception as exc:
+        load_errors.append(f"torch.serialization._legacy_load failed: {type(exc).__name__}: {exc}")
+
     _raise_if_lfs_pointer(ckpt_file)
-    summary = "\n  - ".join(load_errors[-3:])
+    summary = "\n  - ".join(load_errors[-4:])
+    sig = _format_file_signature(ckpt_file)
     raise RuntimeError(
         "Failed to load checkpoint.\n"
         f"  path: {ckpt_file}\n"
         f"  size_bytes: {size_bytes}\n"
+        f"  file_signature: {sig}\n"
         "  attempted loaders:\n"
         f"  - {summary}\n"
         "Please first verify this same file can be loaded by scripts/test.py (it uses torch.load(...)[\"model\"]). "
-        "If test.py also fails, the checkpoint file itself is invalid/corrupted or incomplete."
+        "If test.py also fails, the checkpoint file itself is invalid/corrupted/incomplete or not a PyTorch checkpoint."
     )
 
 def pair_neg_gt(files: Iterable[str]) -> List[Tuple[str, str]]:
