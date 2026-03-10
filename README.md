@@ -85,6 +85,12 @@ pip install -r requirements.txt
 
 ```bash
 python scripts/train.py --config configs/mall_train_ce_base.yaml
+
+python scripts/train.py --config configs/mall_train_ce_traj.yaml
+
+python scripts/train.py --config configs/mall_train_anchor.yaml
+
+python scripts/train.py --config configs/mall_train_crf.yaml
 ```
 
 常见覆盖参数：
@@ -109,6 +115,12 @@ python scripts/train.py --config configs/mall_train_ce_base.yaml \
 
 ```bash
 python scripts/test.py --config configs/mall_train_ce_base.yaml
+
+python scripts/test.py --config configs/mall_train_ce_traj.yaml
+
+python scripts/test.py --config configs/mall_train_anchor.yaml
+
+python scripts/test.py --config configs/mall_train_crf.yaml
 ```
 
 常用覆盖项：
@@ -134,8 +146,18 @@ python scripts/test.py --config configs/mall_train_ce_base.yaml --disable_gate
 ## 7. 纠错诊断
 
 ```bash
+python scripts/diagnose_corrections.py --config configs/mall_train_ce_base.yaml --ckpt runs/mall_ce_base/checkpoint.pt --test_dir data/traj/test
+  
+python scripts/diagnose_corrections.py --config configs/mall_train_ce_traj.yaml --ckpt runs/mall_ce_traj/checkpoint.pt --test_dir data/traj/test
+
+
 python scripts/diagnose_corrections.py \
-  --config configs/mall_train_ce_base.yaml \
+  --config configs/mall_train_anchor.yaml \
+  --ckpt runs/<run_name>/checkpoint.pt \
+  --test_dir data/traj/test
+  
+python scripts/diagnose_corrections.py \
+  --config configs/mall_train_crf.yaml \
   --ckpt runs/<run_name>/checkpoint.pt \
   --test_dir data/traj/test
 ```
