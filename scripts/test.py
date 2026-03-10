@@ -202,6 +202,7 @@ def main():
     if cfg["model"]["use_crf"] and not use_crf_decode:
         print("[warn] use_crf=true but crf_train_loss!='crf'; using argmax decode because CRF pairwise may be untrained.")
 
+    road_adj_list = build_adj_list(gb.num_nodes, gb.edge_index)
     # CRF allowed_prev
     rev_edge_index = torch.stack([gb.edge_index[1], gb.edge_index[0]], dim=0)
     road_adj_list_rev = build_adj_list(gb.num_nodes, rev_edge_index)
@@ -220,6 +221,7 @@ def main():
     raw_preds, preds_ungated, preds_gated, golds = [], [], [], []
 
     with torch.no_grad():
+        printed = 0
         for neg_path, gt_path in pairs:
             # read pts_coord
             x1, y1, f1 = load_pts_coord_any(neg_path)
@@ -289,33 +291,33 @@ def main():
             preds_gated.append(corrected_gated)
             golds.append(true_seq)
 
-            # ---- print this sample ----
+            # ---- print this sample (limited by --max_print; <=0 disables sample dumps) ----
             maxp = int(args.max_print)
-            print("\n==============================")
-            print("NEG file:", os.path.basename(neg_path))
-            print("GT  file:", os.path.basename(gt_path))
-            print(f"len(pred_ids)={len(pred_seq)} len(corr_ids)={len(final_corrected)} len(gt_ids)={len(true_seq)}")
+            if maxp > 0 and printed < maxp:
+                printed += 1
+                print("\n==============================")
+                print("NEG file:", os.path.basename(neg_path))
+                print("GT  file:", os.path.basename(gt_path))
+                print(f"len(pred_ids)={len(pred_seq)} len(corr_ids)={len(final_corrected)} len(gt_ids)={len(true_seq)}")
 
-            print("\n[pred_ids]")
-            print(pred_seq[:maxp], "..." if len(pred_seq) > maxp else "")
+                print("\n[pred_ids]")
+                print(pred_seq[:maxp], "..." if len(pred_seq) > maxp else "")
 
-            print("\n[corrected_ids]")
-            print(final_corrected[:maxp], "..." if len(final_corrected) > maxp else "")
+                print("\n[corrected_ids]")
+                print(final_corrected[:maxp], "..." if len(final_corrected) > maxp else "")
 
-            print("\n[gt_ids]")
-            print(true_seq[:maxp], "..." if len(true_seq) > maxp else "")
+                print("\n[gt_ids]")
+                print(true_seq[:maxp], "..." if len(true_seq) > maxp else "")
 
-            # With coordinates (print first maxp points)
-            # Output floor in 1..5 if your floors are 1..5
-            floor_base_out = 1 if floor_base == 1 else 0
-            print("\n[pred (id,x,y,f)]")
-            print(ids_to_xyzf(pred_seq[:maxp], gb, floor_base_out=floor_base_out))
+                floor_base_out = 1 if floor_base == 1 else 0
+                print("\n[pred (id,x,y,f)]")
+                print(ids_to_xyzf(pred_seq[:maxp], gb, floor_base_out=floor_base_out))
 
-            print("\n[corrected (id,x,y,f)]")
-            print(ids_to_xyzf(final_corrected[:maxp], gb, floor_base_out=floor_base_out))
+                print("\n[corrected (id,x,y,f)]")
+                print(ids_to_xyzf(final_corrected[:maxp], gb, floor_base_out=floor_base_out))
 
-            print("\n[gt (id,x,y,f)]")
-            print(ids_to_xyzf(true_seq[:maxp], gb, floor_base_out=floor_base_out))
+                print("\n[gt (id,x,y,f)]")
+                print(ids_to_xyzf(true_seq[:maxp], gb, floor_base_out=floor_base_out))
 
     raw_tok, raw_seq = token_seq_accuracy(raw_preds, golds)
     ungated_tok, ungated_seq = token_seq_accuracy(preds_ungated, golds)
