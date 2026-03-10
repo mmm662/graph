@@ -193,6 +193,7 @@ def main():
         apply_input_anchor_bias_inference=cfg["model"].get("apply_input_anchor_bias_inference", False),
         apply_input_anchor_bias_training=cfg["model"].get("apply_input_anchor_bias_training", True),
         inference_use_input_context=cfg["model"].get("inference_use_input_context", True),
+        training_use_input_context=cfg["model"].get("training_use_input_context", False),
     ).to(device)
 
     model.load_state_dict(model_state, strict=True)
@@ -202,9 +203,10 @@ def main():
         print("[warn] use_crf=true but crf_train_loss!='crf'; using argmax decode because CRF pairwise may be untrained.")
 
     # CRF allowed_prev
-    road_adj_list = build_adj_list(gb.num_nodes, gb.edge_index)
+    rev_edge_index = torch.stack([gb.edge_index[1], gb.edge_index[0]], dim=0)
+    road_adj_list_rev = build_adj_list(gb.num_nodes, rev_edge_index)
     k_hop = int(cfg["train"]["k_hop"])
-    allowed_prev = k_hop_neighbors(road_adj_list, k=k_hop)
+    allowed_prev = k_hop_neighbors(road_adj_list_rev, k=k_hop)
 
     # load test pairs
     all_files = glob.glob(os.path.join(test_dir, "**", "*.mat"), recursive=True)

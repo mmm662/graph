@@ -233,3 +233,4 @@ python scripts/correct_one.py \
 
 - 变更记录：`CHANGELOG.md`
 - 运行手册：`RUNBOOK.md`
+- 公式说明（修正版）：`MODEL_FORMULATION.md`

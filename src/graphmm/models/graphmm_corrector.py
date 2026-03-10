@@ -29,6 +29,7 @@ class GraphMMCorrector(nn.Module):
         apply_input_anchor_bias_inference: bool = False,
         apply_input_anchor_bias_training: bool = True,
         inference_use_input_context: bool = True,
+        training_use_input_context: bool = False,
     ):
         super().__init__()
         self.num_nodes = num_nodes
@@ -39,6 +40,7 @@ class GraphMMCorrector(nn.Module):
         self.apply_input_anchor_bias_inference = bool(apply_input_anchor_bias_inference)
         self.apply_input_anchor_bias_training = bool(apply_input_anchor_bias_training)
         self.inference_use_input_context = bool(inference_use_input_context)
+        self.training_use_input_context = bool(training_use_input_context)
 
         self.node_encoder = NodeFeatureEncoder(num_floors, node_num_dim, floor_emb_dim, road_dim)
 
@@ -171,6 +173,29 @@ class GraphMMCorrector(nn.Module):
 
         tf = teacher_forcing.clone()
         tf[tf == PADDING_ID] = 0
+
+        if self.training_use_input_context:
+            # Keep train-time decoder inputs consistent with input-context inference:
+            # d1=H_R[x1], dt=H_R[x_{t-1}] for t>=2.
+            tf_infer = pred_safe
+            dec_inputs = []
+            prev_emb = start_emb
+            for t in range(L):
+                dec_inputs.append(prev_emb.unsqueeze(1))
+                prev_emb = H_R[tf_infer[:, t]]
+            dec_inp = torch.cat(dec_inputs, dim=1)
+            dec_out, _ = self.decoder(dec_inp, dec_h)
+
+            ctx = []
+            for t in range(L):
+                ctx.append(self.attn(dec_out[:, t, :], enc_out, enc_out, mask=mask).unsqueeze(1))
+            ctx_all = torch.cat(ctx, dim=1)
+
+            Z = F.normalize(self.dec_out(torch.cat([dec_out, ctx_all], dim=-1)), p=2, dim=-1)
+            logits = self.hidden_similarity(Z, H_R)
+            if self.apply_input_anchor_bias_training:
+                logits = self._apply_input_anchor_bias(logits, pred_safe, mask)
+            return logits, H_R
 
         dec_inputs = []
         prev_emb = start_emb
