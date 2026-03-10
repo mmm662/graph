@@ -156,6 +156,7 @@ def main():
         apply_input_anchor_bias_inference=cfg["model"].get("apply_input_anchor_bias_inference", False),
         apply_input_anchor_bias_training=cfg["model"].get("apply_input_anchor_bias_training", True),
         inference_use_input_context=cfg["model"].get("inference_use_input_context", True),
+        training_use_input_context=cfg["model"].get("training_use_input_context", False),
     )
 
     run_dir = ROOT / "runs" / cfg["output"]["run_name"]

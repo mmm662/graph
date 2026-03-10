@@ -38,6 +38,7 @@ model:
   apply_input_anchor_bias_inference: true
   apply_input_anchor_bias_training: true
   inference_use_input_context: true
+  training_use_input_context: false
   min_correction_confidence: 0.0
   min_correction_logit_gain: 0.0
 

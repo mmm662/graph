@@ -59,6 +59,10 @@ def main():
         use_crf=cfg["model"]["use_crf"],
         unreachable_penalty=cfg["model"]["unreachable_penalty"],
         input_anchor_bias=cfg["model"].get("input_anchor_bias", 0.0),
+        apply_input_anchor_bias_inference=cfg["model"].get("apply_input_anchor_bias_inference", False),
+        apply_input_anchor_bias_training=cfg["model"].get("apply_input_anchor_bias_training", True),
+        inference_use_input_context=cfg["model"].get("inference_use_input_context", True),
+        training_use_input_context=cfg["model"].get("training_use_input_context", False),
     ).to(device)
 
     model_state = load_model_state_dict(args.ckpt, device=device)
@@ -94,8 +98,9 @@ def main():
     )
 
     # 4) decode
-    road_adj_list = build_adj_list(gb.num_nodes, gb.edge_index)
-    allowed_prev = k_hop_neighbors(road_adj_list, k=cfg["train"]["k_hop"])
+    rev_edge_index = torch.stack([gb.edge_index[1], gb.edge_index[0]], dim=0)
+    road_adj_list_rev = build_adj_list(gb.num_nodes, rev_edge_index)
+    allowed_prev = k_hop_neighbors(road_adj_list_rev, k=cfg["train"]["k_hop"])
 
     crf_train_loss = str(cfg.get("train", {}).get("crf_train_loss", "ce")).lower()
     use_crf_decode = bool(cfg["model"]["use_crf"] and crf_train_loss == "crf")
