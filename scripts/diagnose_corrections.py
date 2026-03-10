@@ -316,6 +316,7 @@ def main() -> None:
         apply_input_anchor_bias_inference=cfg["model"].get("apply_input_anchor_bias_inference", False),
         apply_input_anchor_bias_training=cfg["model"].get("apply_input_anchor_bias_training", True),
         inference_use_input_context=cfg["model"].get("inference_use_input_context", True),
+        training_use_input_context=cfg["model"].get("training_use_input_context", False),
     ).to(device)
 
     model.load_state_dict(model_state, strict=True)
@@ -333,8 +334,10 @@ def main() -> None:
     junction_nodes = {i for i, d in enumerate(node_degree) if d >= args.junction_degree}
     near_junction_mask = junction_proximity_mask(road_adj, junction_nodes, args.junction_hops)
 
+    rev_edge_index = torch.stack([gb.edge_index[1], gb.edge_index[0]], dim=0)
+    road_adj_list_rev = build_adj_list(gb.num_nodes, rev_edge_index)
     k_hop = int(cfg["train"]["k_hop"])
-    allowed_prev = k_hop_neighbors(road_adj, k=k_hop)
+    allowed_prev = k_hop_neighbors(road_adj_list_rev, k=k_hop)
     use_crf_decode = bool(use_crf_cfg and crf_train_loss == "crf" and not args.force_argmax_decode)
 
     print(f"[diag] use_crf_cfg={int(use_crf_cfg)} crf_train_loss={crf_train_loss} use_crf_decode={int(use_crf_decode)}")

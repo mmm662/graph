@@ -280,7 +280,7 @@ def train_loop(
 
                 valid_mask = (flat_target != PADDING_ID).float()
                 err_mask = ((pred_pad.view(B * Lm) != flat_target) & (flat_target != PADDING_ID)).float()
-                weights = valid_mask + err_mask * max(float(error_token_weight) - 1.0, 0.0)
+                weights = valid_mask + err_mask * (float(error_token_weight) - 1.0)
                 loss = (per_tok_loss * weights).sum() / weights.sum().clamp(min=1.0)
 
             opt.zero_grad()
