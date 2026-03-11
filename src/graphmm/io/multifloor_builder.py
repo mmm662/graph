@@ -1,6 +1,6 @@
 from __future__ import annotations
 from dataclasses import dataclass
-from typing import List, Tuple, Dict
+from typing import List, Tuple
 import numpy as np
 import torch
 from graphmm.io.mat_reader import read_mat
@@ -60,14 +60,11 @@ def build_multifloor_graph_with_features(
         raw_attrs.append((t, c, ud, r))
         is_vert.append(vertical)
 
-    def _is_bidirectional_road(t: float, c: float) -> bool:
+    def _is_bidirectional_road(t: float) -> bool:
         """Road semantics from map spec:
         - only t=1 roads are bidirectional by default
         - all other t (including arcs/one-way/cross-floor) follow v1->v2 direction
-        - any non-zero c means cross-floor intent => directed
         """
-        if abs(float(c)) > 1e-6:
-            return False
         t_int = int(round(float(t)))
         return t_int == 1
 
@@ -90,46 +87,27 @@ def build_multifloor_graph_with_features(
             r = float(e[4]) if e.shape[0] >= 5 else 0.0
             ud = float(e[5]) if e.shape[0] >= 6 else 0.0
 
-            # cross-floor edge specified in E via c (floor delta)
-            # when valid target floor exists, interpret v2 on target floor.
-            t_floor = f + int(round(c))
-            if abs(c) > 1e-6 and (0 <= t_floor < len(per_floor)):
-                n_t = per_floor[t_floor]["coord"].shape[0]
-                if 1 <= v_local <= n_t:
-                    v_global = offsets[t_floor] + (v_local - 1)
+            # only t=10 in E is interpreted as a cross-floor edge.
+            # target is mapped to a node on the next floor that shares v's coordinate.
+            if int(round(t)) == 10 and (f + 1) < len(per_floor):
+                Bcoord = per_floor[f + 1]["coord"]
+                vx, vy = float(pf["coord"][v_local - 1, 0]), float(pf["coord"][v_local - 1, 1])
+                key = _coord_key(vx, vy, coord_match_eps)
+                matches = [j for j in range(Bcoord.shape[0])
+                           if _coord_key(float(Bcoord[j, 0]), float(Bcoord[j, 1]), coord_match_eps) == key]
+                if matches:
+                    v_global = offsets[f + 1] + matches[0]
                     add_edge(u, v_global, t=t, c=c, ud=ud, r=r, vertical=True)
-                    if not directed_road:
+                    if add_vertical_bidirectional:
                         add_edge(v_global, u, t=t, c=-c, ud=-ud, r=r, vertical=True)
-                    continue
+                continue
 
-            is_vertical_edge = bool(int(round(t)) == 10 or abs(c) > 1e-6)
+            is_vertical_edge = False
             add_edge(u, v, t=t, c=c, ud=ud, r=r, vertical=is_vertical_edge)
 
-            add_rev = (not directed_road) or _is_bidirectional_road(t=t, c=c)
+            add_rev = (not directed_road) or _is_bidirectional_road(t=t)
             if add_rev:
                 add_edge(v, u, t=t, c=-c, ud=-ud, r=r, vertical=is_vertical_edge)
-
-    # vertical by coord match
-    for f in range(len(per_floor) - 1):
-        off_a, off_b = offsets[f], offsets[f + 1]
-        Acoord = per_floor[f]["coord"]
-        Bcoord = per_floor[f + 1]["coord"]
-
-        bucket: Dict[Tuple[int, int], List[int]] = {}
-        for j in range(Bcoord.shape[0]):
-            x, y = float(Bcoord[j, 0]), float(Bcoord[j, 1])
-            bucket.setdefault(_coord_key(x, y, coord_match_eps), []).append(off_b + j)
-
-        for i in range(Acoord.shape[0]):
-            x, y = float(Acoord[i, 0]), float(Acoord[i, 1])
-            k = _coord_key(x, y, coord_match_eps)
-            if k not in bucket:
-                continue
-            u = off_a + i
-            for v in bucket[k]:
-                add_edge(u, v, t=10.0, c=1.0, ud=1.0, r=0.0, vertical=True)
-                if add_vertical_bidirectional:
-                    add_edge(v, u, t=10.0, c=-1.0, ud=-1.0, r=0.0, vertical=True)
 
     # dedup
     seen = set()
@@ -154,7 +132,6 @@ def build_multifloor_graph_with_features(
     length_n = length / max(len_mean, 1e-6)
 
     t_raw = np.array([t for (t, c, ud, r) in raw_attrs], dtype=np.float32)
-    c_raw = np.array([c for (t, c, ud, r) in raw_attrs], dtype=np.float32)
     ud_raw = np.array([ud for (t, c, ud, r) in raw_attrs], dtype=np.float32)
     r_raw = np.array([r for (t, c, ud, r) in raw_attrs], dtype=np.float32)
     nz = r_raw[r_raw > 0]
@@ -162,8 +139,6 @@ def build_multifloor_graph_with_features(
     r_n = r_raw / max(r_mean, 1e-6)
 
     is_vertical = np.array(is_vert, dtype=np.float32)
-    # if c indicates floor transition, force vertical flag.
-    is_vertical = np.maximum(is_vertical, (np.abs(c_raw) > 1e-6).astype(np.float32))
     edge_attr = np.stack([length_n, is_vertical, t_raw, ud_raw, r_n], axis=1).astype(np.float32)
 
     x_norm = coord_xy[:, 0] / max(col - 1, 1)
