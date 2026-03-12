@@ -91,21 +91,19 @@ def build_multifloor_graph_with_features(
             #   c=+1 -> one floor up, c=-1 -> one floor down,
             #   c=+2/-2 -> two floors up/down, etc.
             # On the target floor, use the node that shares v's coordinate.
+            # Note: keep the original edge (u->v) as well; cross-floor edge is added in addition.
             if int(round(t)) == 10:
                 floor_delta = int(round(c))
                 target_floor = f + floor_delta
-                if floor_delta == 0 or not (0 <= target_floor < len(per_floor)):
-                    continue
-
-                Bcoord = per_floor[target_floor]["coord"]
-                vx, vy = float(pf["coord"][v_local - 1, 0]), float(pf["coord"][v_local - 1, 1])
-                key = _coord_key(vx, vy, coord_match_eps)
-                matches = [j for j in range(Bcoord.shape[0])
-                           if _coord_key(float(Bcoord[j, 0]), float(Bcoord[j, 1]), coord_match_eps) == key]
-                if matches:
-                    v_global = offsets[target_floor] + matches[0]
-                    add_edge(u, v_global, t=t, c=c, ud=ud, r=r, vertical=True)
-                continue
+                if floor_delta != 0 and (0 <= target_floor < len(per_floor)):
+                    Bcoord = per_floor[target_floor]["coord"]
+                    vx, vy = float(pf["coord"][v_local - 1, 0]), float(pf["coord"][v_local - 1, 1])
+                    key = _coord_key(vx, vy, coord_match_eps)
+                    matches = [j for j in range(Bcoord.shape[0])
+                               if _coord_key(float(Bcoord[j, 0]), float(Bcoord[j, 1]), coord_match_eps) == key]
+                    if matches:
+                        v_global = offsets[target_floor] + matches[0]
+                        add_edge(u, v_global, t=t, c=c, ud=ud, r=r, vertical=True)
 
             is_vertical_edge = False
             add_edge(u, v, t=t, c=c, ud=ud, r=r, vertical=is_vertical_edge)
@@ -120,9 +118,12 @@ def build_multifloor_graph_with_features(
     ded_raw = [];
     ded_vert = []
     for (u, v), a, vv in zip(edges, raw_attrs, is_vert):
-        if (u, v) in seen:
+        # Keep semantically different edges even if they share the same (u, v),
+        # e.g. one intra-floor edge and one cross-floor edge projected to same endpoint.
+        edge_key = (u, v, vv, float(a[0]), float(a[1]), float(a[2]), float(a[3]))
+        if edge_key in seen:
             continue
-        seen.add((u, v))
+        seen.add(edge_key)
         ded_edges.append((u, v));
         ded_raw.append(a);
         ded_vert.append(vv)
