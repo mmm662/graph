@@ -26,7 +26,6 @@ def build_multifloor_graph_with_features(
         mat_paths: List[str],
         ppm: float = 1.0,
         directed_road: bool = True,
-        add_vertical_bidirectional: bool = True,
         coord_match_eps: float = 1.0,
         device: str = "cpu",
 ) -> GraphBatch:
@@ -87,20 +86,24 @@ def build_multifloor_graph_with_features(
             r = float(e[4]) if e.shape[0] >= 5 else 0.0
             ud = float(e[5]) if e.shape[0] >= 6 else 0.0
 
-            # only t=10 in E is interpreted as a cross-floor edge.
-            # target is mapped to a node on the next floor that shares v's coordinate.
-            if int(round(t)) == 10 and (f + 1) < len(per_floor):
-                Bcoord = per_floor[f + 1]["coord"]
-                vx, vy = float(pf["coord"][v_local - 1, 0]), float(pf["coord"][v_local - 1, 1])
-                key = _coord_key(vx, vy, coord_match_eps)
-                matches = [j for j in range(Bcoord.shape[0])
-                           if _coord_key(float(Bcoord[j, 0]), float(Bcoord[j, 1]), coord_match_eps) == key]
-                if matches:
-                    v_global = offsets[f + 1] + matches[0]
-                    add_edge(u, v_global, t=t, c=c, ud=ud, r=r, vertical=True)
-                    if add_vertical_bidirectional:
-                        add_edge(v_global, u, t=t, c=-c, ud=-ud, r=r, vertical=True)
-                continue
+            # Cross-floor edges are identified by t=10.
+            # Floor transition is encoded by c:
+            #   c=+1 -> one floor up, c=-1 -> one floor down,
+            #   c=+2/-2 -> two floors up/down, etc.
+            # On the target floor, use the node that shares v's coordinate.
+            # Note: keep the original edge (u->v) as well; cross-floor edge is added in addition.
+            if int(round(t)) == 10:
+                floor_delta = int(round(c))
+                target_floor = f + floor_delta
+                if floor_delta != 0 and (0 <= target_floor < len(per_floor)):
+                    Bcoord = per_floor[target_floor]["coord"]
+                    vx, vy = float(pf["coord"][v_local - 1, 0]), float(pf["coord"][v_local - 1, 1])
+                    key = _coord_key(vx, vy, coord_match_eps)
+                    matches = [j for j in range(Bcoord.shape[0])
+                               if _coord_key(float(Bcoord[j, 0]), float(Bcoord[j, 1]), coord_match_eps) == key]
+                    if matches:
+                        v_global = offsets[target_floor] + matches[0]
+                        add_edge(u, v_global, t=t, c=c, ud=ud, r=r, vertical=True)
 
             is_vertical_edge = False
             add_edge(u, v, t=t, c=c, ud=ud, r=r, vertical=is_vertical_edge)
@@ -115,9 +118,12 @@ def build_multifloor_graph_with_features(
     ded_raw = [];
     ded_vert = []
     for (u, v), a, vv in zip(edges, raw_attrs, is_vert):
-        if (u, v) in seen:
+        # Keep semantically different edges even if they share the same (u, v),
+        # e.g. one intra-floor edge and one cross-floor edge projected to same endpoint.
+        edge_key = (u, v, vv, float(a[0]), float(a[1]), float(a[2]), float(a[3]))
+        if edge_key in seen:
             continue
-        seen.add((u, v))
+        seen.add(edge_key)
         ded_edges.append((u, v));
         ded_raw.append(a);
         ded_vert.append(vv)
