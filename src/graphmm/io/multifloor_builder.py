@@ -26,7 +26,6 @@ def build_multifloor_graph_with_features(
         mat_paths: List[str],
         ppm: float = 1.0,
         directed_road: bool = True,
-        add_vertical_bidirectional: bool = True,
         coord_match_eps: float = 1.0,
         device: str = "cpu",
 ) -> GraphBatch:
@@ -87,19 +86,25 @@ def build_multifloor_graph_with_features(
             r = float(e[4]) if e.shape[0] >= 5 else 0.0
             ud = float(e[5]) if e.shape[0] >= 6 else 0.0
 
-            # only t=10 in E is interpreted as a cross-floor edge.
-            # target is mapped to a node on the next floor that shares v's coordinate.
-            if int(round(t)) == 10 and (f + 1) < len(per_floor):
-                Bcoord = per_floor[f + 1]["coord"]
+            # Cross-floor edges are identified by t=10.
+            # Floor transition is encoded by c:
+            #   c=+1 -> one floor up, c=-1 -> one floor down,
+            #   c=+2/-2 -> two floors up/down, etc.
+            # On the target floor, use the node that shares v's coordinate.
+            if int(round(t)) == 10:
+                floor_delta = int(round(c))
+                target_floor = f + floor_delta
+                if floor_delta == 0 or not (0 <= target_floor < len(per_floor)):
+                    continue
+
+                Bcoord = per_floor[target_floor]["coord"]
                 vx, vy = float(pf["coord"][v_local - 1, 0]), float(pf["coord"][v_local - 1, 1])
                 key = _coord_key(vx, vy, coord_match_eps)
                 matches = [j for j in range(Bcoord.shape[0])
                            if _coord_key(float(Bcoord[j, 0]), float(Bcoord[j, 1]), coord_match_eps) == key]
                 if matches:
-                    v_global = offsets[f + 1] + matches[0]
+                    v_global = offsets[target_floor] + matches[0]
                     add_edge(u, v_global, t=t, c=c, ud=ud, r=r, vertical=True)
-                    if add_vertical_bidirectional:
-                        add_edge(v_global, u, t=t, c=-c, ud=-ud, r=r, vertical=True)
                 continue
 
             is_vertical_edge = False

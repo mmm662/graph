@@ -155,7 +155,6 @@ def main():
         mat_paths=mat_paths,
         ppm=cfg["data"]["ppm"],
         directed_road=cfg["data"]["directed_road"],
-        add_vertical_bidirectional=cfg["data"]["add_vertical_bidirectional"],
         coord_match_eps=cfg["data"]["coord_match_eps"],
         device=device,
     )
