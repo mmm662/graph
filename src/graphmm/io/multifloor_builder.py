@@ -26,7 +26,6 @@ def build_multifloor_graph_with_features(
         mat_paths: List[str],
         ppm: float = 1.0,
         directed_road: bool = True,
-        add_vertical_bidirectional: bool = True,
         coord_match_eps: float = 1.0,
         device: str = "cpu",
 ) -> GraphBatch:
@@ -98,8 +97,6 @@ def build_multifloor_graph_with_features(
                 if matches:
                     v_global = offsets[f + 1] + matches[0]
                     add_edge(u, v_global, t=t, c=c, ud=ud, r=r, vertical=True)
-                    if add_vertical_bidirectional:
-                        add_edge(v_global, u, t=t, c=-c, ud=-ud, r=r, vertical=True)
                 continue
 
             is_vertical_edge = False
