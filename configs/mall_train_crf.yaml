@@ -2,7 +2,6 @@
 data:
   ppm: 1.0
   directed_road: true
-  add_vertical_bidirectional: true
   coord_match_eps: 1.0
   mat_paths:
     - data/mall/floor1.mat
